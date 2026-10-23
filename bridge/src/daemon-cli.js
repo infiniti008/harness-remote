@@ -11,7 +11,7 @@ import { harnessProfile } from "./harness-profiles.js"
 import { canListen, canListenForBind, harnessPortUnavailableMessage, resolveLaunchPlan } from "./launcher.js"
 import { loadMachineIdentity } from "./machine-registry.js"
 import { MachineDaemon, createMachineDaemonServer } from "./machine-daemon.js"
-import { ManagedOpenCodeHost } from "./opencode-host.js"
+import { internalServerCredentials, ManagedOpenCodeHost } from "./opencode-host.js"
 import { resolveOpenCodeCommand } from "./opencode-discovery.js"
 
 function requireValue(args, index, option) {
@@ -154,8 +154,9 @@ async function main() {
       command: openCodeCommand,
       host: openCodeHost,
       port: openCodePort,
-      username: config.username,
-      password: config.password,
+      // Only this daemon talks to managed OpenCode, and OpenCode exposes its server password to every
+      // tool command it runs: it gets credentials of its own, never the gateway's.
+      ...internalServerCredentials(),
       startTimeoutMs: openCodeTimeout
     })
     managedOpenCode.on("stderr", (line) => writeHarnessLog("opencode", line))

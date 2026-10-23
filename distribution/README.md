@@ -1,7 +1,27 @@
 # Harness Remote local candidate
 
-This is an experimental build based on Harness Remote 3.4.0, with separately preserved local changes.
+This is an experimental build based on Harness Remote 3.5.0, with separately preserved local changes.
 It is not the upstream npm release and is not approved for Home Assistant deployment yet.
+
+## Receiving upstream updates
+
+The maintained fork is https://github.com/infiniti008/harness-remote; its upstream is
+https://github.com/giuliastro/harness-remote. The fork's `main` branch is an upstream mirror;
+`local/memory-safety` holds the reviewed local patches. Official `v*` tags retain their upstream
+meaning. Never overwrite or force-sync the maintained branch with upstream's tree.
+
+For each stable upstream release, create an integration branch from the maintained branch and
+merge the official tag. Resolve overlapping changes while preserving upstream fixes and local
+read/cache limits. Align the candidate versions, lockfiles, embedded version, distribution defaults
+and `build-release.py`'s upstream commit. Run bridge and web checks, bounded long-history and
+writer-adoption tests, then build and verify matching gateway/web artifacts. Advance the maintained
+branch only after those checks pass. Published commits are merged forward, not rebased away.
+
+The current integration target is upstream `v3.5.0` (`4463fcfa02d35c77177b762f04ba6841fc168107`).
+Scheduled update detection and automatic update pull requests are not configured yet. They should
+prepare an integration proposal; conflicts or failed checks must block promotion. Updating installed
+services remains a separate step with a retained previous version. Running `npx harness-remote@latest`
+installs upstream's npm package and does not install this fork's patches.
 
 ## Artifacts and installation
 
@@ -40,6 +60,9 @@ The code bounds Codex journal viewing: 16 MiB maximum JSONL record, 32 MiB scann
 one cold read plus eight queued reads per loader, and 20 seconds of cooperative read processing.
 These are application budgets, not kernel memory limits. Native Codex resume and session discovery
 are outside these budgets. A long agent turn is not subject to the journal-read time limit.
+The upstream 3.5.0 external-activity probes also have a scanner-level 2 MiB read/record budget
+and a 2-second cooperative processing budget, including journals with a single oversized record.
+An inconclusive probe supplies no external busy evidence; it never overrides bridge-owned busy.
 
 Use a container cgroup or a systemd unit that limits the whole subtree before production use.
 Node heap flags do not cap native Codex. POSIX adapter process groups clean up descendants on normal

@@ -30,27 +30,22 @@ import {
 } from "./workspaceMachines"
 import "./styles.css"
 import "./taskdesk-theme.css"
-import "./universal-workspace-readable-fixes.css"
-import "./taskdesk-v3-unified.css"
 import "./conversation-control-plane-overrides.css"
-import "./conversation-control-plane-mobile-polish.css"
-import "./v3-mobile-regression-fixes.css"
-import "./v3-mobile-landscape-grid-fix.css"
-import "./v3-mobile-workspace-switcher-polish.css"
-import "./v3-mobile-a11y-fix.css"
-import "./v3-mobile-product-parity.css"
+import "./v3-mobile.css"
 import "./session-first-navigation.css"
 import "./session-first-workbench.css"
 import "./conversation-base.css"
-import "./session-first-centering-fix.css"
 import "./session-handoff-routing.css"
 import "./machine-pairing.css"
+import "./machine-card-layout.css"
 // Loaded last: the ported controls refine rules the sheets above already set, and settling those
 // ties by load order is what keeps the port free of `!important`.
 import "./beautiful-ui-controls.css"
 // A turn's Activity section. It styles only its own `hr-act*` classes, so its place here is about
 // reading order rather than winning ties.
 import "./activity-timeline.css"
+// The narrow Session header refines phone rules from several sheets above, so it settles last.
+import "./session-header-narrow.css"
 
 installAppPreferences()
 installCompletionAudioGuard()

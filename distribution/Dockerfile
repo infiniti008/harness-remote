@@ -1,7 +1,7 @@
 # Template only: the Docker daemon is unavailable in the local test container.
 ARG NODE_IMAGE=node:24.21.0-bookworm-slim
 FROM ${NODE_IMAGE}
-ARG RELEASE_VERSION=3.4.0-local.1
+ARG RELEASE_VERSION=3.5.0-local.1
 RUN apt-get update && apt-get install -y --no-install-recommends tini git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /tmp/release

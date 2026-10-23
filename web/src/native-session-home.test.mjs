@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
-import { appendCursorPage, needsOpenCodeRailStream, refreshCursorPage, sessionTreeRows } from "./components/native-session-home.tsx"
-import { reconcileStableSessionRecords } from "./components/native-session-home-base.tsx"
+import { needsRailLifecycleStream } from "./components/native-session-home.tsx"
+import { appendCursorPage, reconcileStableSessionRecords, refreshCursorPage, sessionTreeRows } from "./components/native-session-home-base.tsx"
 import { mergedAttentionSessionCount } from "./components/native-session-home-attention.tsx"
 import { canCreateNativeSession } from "./native-session-create.ts"
 import { classifyNativeSessionAttention, sessionNeedsAttention } from "./native-session-attention.ts"
@@ -224,16 +224,18 @@ const railAgent = (backend, state = "available", capabilities = { sessions: true
   capabilities
 })
 
-assert.equal(needsOpenCodeRailStream(railAgent("opencode")), true, "an available OpenCode agent without attention capabilities needs the persistent routed rail stream")
-for (const backend of ["codex", "claude", "omp", "pi"]) {
-  assert.equal(needsOpenCodeRailStream(railAgent(backend)), false, `${backend} must never gain the OpenCode routed rail lifecycle owner`)
+// The daemon's unscoped stream carries only its primary harness (Codex by launch priority), so an
+// OMP turn that ended while another Session was open never reached the rail.
+for (const backend of ["opencode", "omp", "pi", "claude", "codex"]) {
+  assert.equal(needsRailLifecycleStream(railAgent(backend)), true, `an available ${backend} agent without attention capabilities needs the persistent routed rail stream`)
 }
 for (const state of ["configured", "unavailable", "starting", "error"]) {
-  assert.equal(needsOpenCodeRailStream(railAgent("opencode", state)), false, `OpenCode ${state} must not be started just because the Session rail is visible`)
+  assert.equal(needsRailLifecycleStream(railAgent("opencode", state)), false, `OpenCode ${state} must not be started just because the Session rail is visible`)
+  assert.equal(needsRailLifecycleStream(railAgent("omp", state)), false, `OMP ${state} must not be started just because the Session rail is visible`)
 }
-assert.equal(needsOpenCodeRailStream(railAgent("opencode", "available", { sessions: false, prompt: true })), false, "OpenCode without native Sessions does not need a Session rail stream")
-assert.equal(needsOpenCodeRailStream(railAgent("opencode", "available", { sessions: true, prompt: true, questions: true })), false, "OpenCode question capability already has an Attention-owned routed stream")
-assert.equal(needsOpenCodeRailStream(railAgent("opencode", "available", { sessions: true, prompt: true, permissions: true })), false, "OpenCode permission capability already has an Attention-owned routed stream")
+assert.equal(needsRailLifecycleStream(railAgent("opencode", "available", { sessions: false, prompt: true })), false, "a harness without native Sessions does not need a Session rail stream")
+assert.equal(needsRailLifecycleStream(railAgent("opencode", "available", { sessions: true, prompt: true, questions: true })), false, "question capability already has an Attention-owned routed stream")
+assert.equal(needsRailLifecycleStream(railAgent("codex", "available", { sessions: true, prompt: true, permissions: true })), false, "permission capability already has an Attention-owned routed stream")
 
 const permission = {
   id: "permission-1",
@@ -309,7 +311,8 @@ assert.doesNotMatch(source, /t\("sf\.findingSessions"\)/, "the central workspace
 assert.doesNotMatch(source, /t\("sf\.loadingSessions"\)/, "machine cards must not repeat the central Session-loading status")
 assert.doesNotMatch(source, /!loaded \? <LoadingIcon size=\{15\} \/>/, "New Session keeps its stable label while bootstrap disables it")
 assert.doesNotMatch(source, /\{!loaded && loading \? <div className="hr-native-home-empty">/, "the rail must not render a second loading panel")
-assert.match(source, /const discoveryReady = sources\.every\(\(\{ state \}\) => state !== "loading"\)/, "Session discovery must not settle while machine probes are still in flight")
+assert.match(source, /selectReadyNativeSessionSources\(sources\)/, "Session discovery must use per-machine probe readiness")
+assert.match(source, /Promise\.all\(readySources\.map/, "Session discovery must start for the settled machines without waiting for loading siblings")
 assert.match(source, /if \(!discoveryReady\) \{[\s\S]*setLoading\(true\)[\s\S]*return/, "the rail must remain explicitly loading until machine discovery can produce real Session results")
 assert.match(source, /discoverAgentNativeSessionPageSkippingEmpty\(machine\.config, agent\)/, "recurring discovery must stop at the first populated native Session page")
 assert.match(source, /machine\.config\.username,[\s\S]*machine\.config\.password/, "a corrected machine credential must invalidate the Session index")

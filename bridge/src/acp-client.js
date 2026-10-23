@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process"
 import { EventEmitter } from "node:events"
 import { stat } from "node:fs/promises"
+import { withoutGatewayCredentials } from "./child-environment.js"
 import { closeOwnedChildProcess, ownChildProcess } from "./managed-child-process.js"
 
 // An adapter launched through `npx` downloads itself on first use, which takes far longer
@@ -156,7 +157,7 @@ export class AcpClient extends EventEmitter {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
       detached: ownProcessGroup,
-      env: { ...process.env, ...this.#environment },
+      env: withoutGatewayCredentials({ ...process.env, ...this.#environment }),
       ...(this.#cwd ? { cwd: this.#cwd } : {})
     })
     ownChildProcess(child, { processGroup: ownProcessGroup })
@@ -176,6 +177,10 @@ export class AcpClient extends EventEmitter {
       this.#stderrPartial = pending.pop() ?? ""
       for (const line of pending) this.emit("stderr", line)
     })
+    // Writing to an adapter that has already exited (a CLI that is not installed exits at once)
+    // fails with EPIPE on its stdin. The write callback rejects that request and the exit handler
+    // reports the adapter; without a listener the stream error would crash the whole daemon.
+    child.stdin?.on?.("error", () => {})
     child.on("error", (error) => this.#handleExit(error, child))
     child.on("exit", (code, signal) => {
       if (this.#child !== child) return

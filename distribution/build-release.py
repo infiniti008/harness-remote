@@ -85,7 +85,7 @@ def main():
     out = ROOT / 'release' / version
     out.mkdir(parents=True, exist_ok=True)
     manifest = {'version': version, 'channel': 'candidate', 'commit': commit, 'dirty': dirty,
-        'upstreamCommit': 'd19f6278733826fdc2d6d520dbfe73117e3bae26',
+        'upstreamCommit': '4463fcfa02d35c77177b762f04ba6841fc168107',
         'testedRuntime': {'node': '24.21.0', 'codex': '0.163.0', 'codex-acp': '1.13.1'},
         'historyProtocol': 1, 'nativeCodexBundled': False, 'dependencies': DEPENDENCIES}
     with tempfile.TemporaryDirectory(dir=out) as temp:

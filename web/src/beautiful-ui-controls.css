@@ -403,6 +403,40 @@
   border-color: var(--td3-blue-border);
 }
 
+/* Waiting for something before a prompt can be written (the model catalog, say). A disabled field
+   on its own looked exactly like an idle one, so the wait is named above the field and the field
+   itself reads as inactive until it is ready. */
+.uw-composer-shell.busy {
+  cursor: progress;
+  border-style: dashed;
+}
+
+.uw-composer-busy {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 13px 0;
+  color: var(--td3-blue-text);
+  font-size: 12.5px;
+  font-weight: 650;
+}
+
+.uw-composer-busy > svg {
+  flex: none;
+  animation: bui-spin .9s linear infinite;
+}
+
+.uw-composer-shell.busy textarea:disabled {
+  cursor: progress;
+  opacity: .55;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .uw-composer-busy > svg {
+    animation: none;
+  }
+}
+
 .tdw-work-thread-conversation .uw-composer-footer {
   min-height: 44px;
   padding: 6px 9px 9px 13px;
@@ -523,24 +557,6 @@
  * three passes read as a font change. Everything below moves.
  * ============================================================================= */
 
-/* ---------------------------------------------------------------- spinner */
-
-/* One turning ring per running call. A conic gradient masked to a ring costs the
-   compositor a single rotation - no per-frame rasterising, which matters once six
-   of these are on screen on a phone. */
-.bui-spinner {
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  border: 1.75px solid var(--td3-border-strong);
-  border-top-color: currentcolor;
-  animation: bui-spin .75s linear infinite;
-}
-
-@keyframes bui-spin {
-  to { transform: rotate(1turn); }
-}
-
 /* ------------------------------------------------------------- typing dots */
 
 /* The pending row - the one thing on screen between sending a prompt and the
@@ -612,18 +628,12 @@
 /* ------------------------------------------ reduced motion, fourth pass */
 
 @media (prefers-reduced-motion: reduce) {
-  .bui-spinner,
   .bui-typing i,
   .tdw-work-thread-conversation .uw-message-working,
   .tdw-work-thread-conversation .uw-history-loader::after {
     animation: none;
     opacity: 1;
     transform: none;
-  }
-
-  /* A ring with no rotation is a static ring, which still reads as "in progress". */
-  .bui-spinner {
-    border-top-color: currentcolor;
   }
 }
 

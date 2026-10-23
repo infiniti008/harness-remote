@@ -23,6 +23,8 @@ test("index preflight never creates a missing database or repairs an unfinished 
     completed.exec("UPDATE backfill_state SET status = 'complete'")
     completed.close()
     assert.equal((await inspectCodexIndex(home)).ready, true)
+    assert.equal((await inspectCodexIndex(path.join(home, "other-home"), { sqliteHome: home })).ready, true)
+    assert.equal((await inspectCodexIndex(home, { sqliteHome: "relative/path" })).status, "unknown")
     await writeFile(path.join(home, "config.toml"), 'sqlite_home = "/somewhere-else"\n')
     assert.equal((await inspectCodexIndex(home)).status, "unknown")
     assert.equal((await inspectCodexIndex(home, { stateDatabase: file })).ready, true)

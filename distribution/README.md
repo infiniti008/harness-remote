@@ -23,8 +23,9 @@ No automatic service installation, restart loop or machine pairing is performed 
 Authentication settings must be supplied through the existing daemon options/environment.
 
 The preflight reads `state_5.sqlite` in read-only mode. It requires `backfill_state.status=complete`:
-a missing/unfinished index is not initialized by this launcher. A custom native SQLite location must
-be supplied as `HARNESS_CODEX_STATE_DB` for inspection. The check never resets leases or rebuilds data.
+a missing/unfinished index is not initialized by this launcher. `CODEX_SQLITE_HOME` is respected;
+a `sqlite_home` override inside native config must be supplied as `HARNESS_CODEX_STATE_DB` for inspection.
+The check never resets leases or rebuilds data.
 This is a startup guard, not a guarantee that native resume or later metadata scans fit in memory.
 
 Serve the web artifact from the existing web server after testing it on a separate URL. Check its

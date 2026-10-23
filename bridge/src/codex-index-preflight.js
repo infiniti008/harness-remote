@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 
 /** Inspect only. Never changes a lease, runs backfill, or creates/rebuilds a database. */
-export async function inspectCodexIndex(home, { stateDatabase } = {}) {
+export async function inspectCodexIndex(home, { stateDatabase, sqliteHome = process.env.CODEX_SQLITE_HOME } = {}) {
   const config = path.join(home, "config.toml")
   if (!stateDatabase && existsSync(config)) {
     const text = readFileSync(config, "utf8")
@@ -10,7 +10,10 @@ export async function inspectCodexIndex(home, { stateDatabase } = {}) {
       return { status: "unknown", ready: false, reason: "Custom SQLite location requires HARNESS_CODEX_STATE_DB for the preflight" }
     }
   }
-  const file = stateDatabase || path.join(home, "state_5.sqlite")
+  if (!stateDatabase && sqliteHome && !path.isAbsolute(sqliteHome)) {
+    return { status: "unknown", ready: false, reason: "CODEX_SQLITE_HOME must be an absolute path" }
+  }
+  const file = stateDatabase || path.join(sqliteHome || home, "state_5.sqlite")
   if (!existsSync(file)) return { status: "missing", ready: false, reason: "Native history index must be initialized under resource limits before starting the gateway" }
   let database
   try {

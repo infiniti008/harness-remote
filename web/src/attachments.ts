@@ -7,7 +7,8 @@
  * the mobile uplink and the tokens both.
  *
  * The geometry and the part shape are pure so they can be tested without a DOM; only
- * `fileToAttachment` touches the canvas.
+ * `fileToAttachment` touches the canvas. `imageFilesFromClipboard` is just a read of a
+ * `DataTransfer` the paste event hands over, so it too stays free of DOM side effects.
  */
 
 export const ATTACHMENT_MAX_EDGE = 1568
@@ -70,4 +71,30 @@ export async function fileToAttachment(
     if (lossless.length <= Math.floor(maxBytes / 3) * 4) return attachmentPart("image/png", filename, lossless)
   }
   return attachmentPart("image/jpeg", filename, canvas.toDataURL("image/jpeg", 0.85))
+}
+
+/**
+ * Pulls image files out of a `paste` event's `DataTransfer` so a pasted screenshot can be attached
+ * instead of being dropped as raw bytes into the composer. It runs on the native `paste` event
+ * rather than `navigator.clipboard.read`, which would be unavailable on this app's plain-HTTP LAN
+ * because that API needs a secure context.
+ *
+ * It reads `DataTransferItemList.items` first — the only source that distinguishes an image from
+ * pasted text — then falls back to `files`, which some platforms expose without per-item kinds.
+ * `getAsFile` is single-use on some browsers, so each item is asked once and the returned file's own
+ * type is what decides.
+ */
+export function imageFilesFromClipboard(dataTransfer: DataTransfer): File[] {
+  const files: File[] = []
+  const items = dataTransfer.items
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index]
+    if (item.kind !== "file") continue
+    const file = item.getAsFile()
+    if (!file) continue
+    const type = item.type || file.type
+    if (/^image\//.test(type)) files.push(file)
+  }
+  if (files.length) return files
+  return Array.from(dataTransfer.files).filter((file) => /^image\//.test(file.type))
 }

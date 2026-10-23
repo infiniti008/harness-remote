@@ -1,6 +1,7 @@
 import { App } from "@capacitor/app"
 import { Capacitor, CapacitorHttp, registerPlugin, type PluginListenerHandle } from "@capacitor/core"
 import { machineBaseUrl, normalizeServerConfig } from "./serverConfig.ts"
+import type { ServerConfig } from "./types.ts"
 import type { WorkspaceMachine } from "./workspaceMachines.ts"
 
 export type MachinePairingActivation = {
@@ -69,6 +70,37 @@ function normalizedPairingEndpoint(value: string): string | null {
   const port = Number(endpoint.port)
   if (!Number.isInteger(port) || port < 1 || port > 65_535) return null
   return `${endpoint.protocol}//${endpoint.hostname}:${port}`
+}
+
+/** A phone's loopback is the phone itself. Never offer a wildcard or loopback as a QR address. */
+export function phonePairingEndpoint(value: string): string | null {
+  const endpoint = normalizedPairingEndpoint(value.trim())
+  if (!endpoint) return null
+  const host = new URL(endpoint).hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase()
+  if (host === "localhost" || host.endsWith(".localhost") || host === "0.0.0.0" || host === "::"
+    || host === "::1" || /^127\./.test(host) || /^::ffff:(?:7f[0-9a-f]{2}:|0:0$)/.test(host)) return null
+  return endpoint
+}
+
+/** Reuse the daemon's one-time authority with a published address (e.g. a Docker host's LAN port).
+ * Only the endpoint changes: the token and expiry still belong to the same daemon grant. */
+export function machinePairingLinkForEndpoint(grant: MachinePairingGrant, value: string): MachinePairingGrantLink | null {
+  if (grant.loopbackOnly) return null
+  const endpoint = phonePairingEndpoint(value)
+  const source = grant.links[0]
+  if (!endpoint || !source) return null
+  const uri = new URL(source.uri)
+  uri.searchParams.set("endpoint", endpoint)
+  return { endpoint, uri: uri.toString() }
+}
+
+/** The connection that just reached the daemon is a better default than its container interfaces.
+ * Do not substitute the web page's hostname: it may host a client for an entirely different machine. */
+export function pairingGrantForConnection(grant: MachinePairingGrant, config: ServerConfig): MachinePairingGrant {
+  if (grant.loopbackOnly) return grant
+  const connected = machinePairingLinkForEndpoint(grant, machineBaseUrl(config))
+  const links = grant.links.filter((link) => phonePairingEndpoint(link.endpoint))
+  return { ...grant, links: connected ? [connected, ...links.filter((link) => link.endpoint !== connected.endpoint)] : links }
 }
 
 /** Accept only the private URI emitted by the HR3 machine daemon startup pairing grant. Expiry is

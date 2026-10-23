@@ -32,6 +32,7 @@ const clipboard = read("clipboard.ts")
 const conversation = read("components/taskdesk-conversation.tsx")
 const messageContent = read("components/taskdesk-message-content.tsx")
 const workThread = read("components/work-thread-conversation.tsx")
+const lightbox = read("components/image-lightbox.tsx")
 const nativePrompt = read("native-session-prompt.ts")
 const nativeObserver = read("components/native-session-observer.tsx")
 const routeCapabilities = read("native-session-route-capabilities.ts")
@@ -95,6 +96,11 @@ test("Session-first restores capability-gated image attachments without reviving
   assert.match(conversation, /fileToAttachment/)
   assert.match(conversation, /accept="image\/\*"/)
   assert.match(conversation, /attachmentsSupported \? \(/)
+  // A clipboard-pasted image is gated by the same flag and reuses the picker's attachment path, so
+  // pasting and picking can never drift apart.
+  assert.match(conversation, /onPaste=\{\(event\)/)
+  assert.match(conversation, /imageFilesFromClipboard\(event\.clipboardData\)/)
+  assert.match(conversation, /attachImageFiles\(/)
   assert.match(workThread, /attachments: promptAttachments/)
   assert.match(nativePrompt, /attachments: AttachmentPart\[\] = \[\]/)
   assert.match(nativePrompt, /attachmentKeys/)
@@ -114,4 +120,27 @@ test("v3 renders todowrite tool input as the structured checklist available in v
   assert.match(timeline, /item\.status === "completed" \? "✓" : item\.status === "in_progress" \? "◐" : "○"/)
   assert.match(timeline, /<TodoListView items=\{todos\} \/>/)
   assert.doesNotMatch(messageContent, /SessionComposer/)
+})
+
+test("a sent image opens a centered lightbox for a full-size view", () => {
+  // The thumbnail becomes a button that raises a shared modal rather than a new ad-hoc popup. The image
+  // is a data: URL on the part, so only React state and the shared dismiss hook are needed to wire it.
+  assert.match(content, /import \{ useState \} from "react"/)
+  assert.match(content, /import \{ ImageLightbox \} from "\.\/image-lightbox"/)
+  assert.match(content, /const \[preview, setPreview\] = useState\(false\)/)
+  assert.match(content, /className="uw-message-attachment-open"/)
+  assert.match(content, /onClick=\{\(\) => setPreview\(true\)\}/)
+  assert.match(content, /<ImageLightbox src=\{imageUrl\} label=\{label\}/)
+
+  // The lightbox is a fixed, centered module built on the shell's shared dialog machinery — a backdrop
+  // that closes on its own click, a role="dialog" panel, and useDialogDismiss for Escape / focus-trap /
+  // return of focus — stacked above the pairing toast (z-index 1200).
+  assert.match(lightbox, /useDialogDismiss/)
+  assert.match(lightbox, /role="dialog"/)
+  assert.match(lightbox, /aria-modal="true"/)
+  assert.match(lightbox, /onMouseDown=\{onClose\}/)
+  const backdrop = conversationCss.match(/\.uw-image-lightbox-backdrop \{[^}]*\}/)
+  assert.ok(backdrop, "the lightbox backdrop must be defined")
+  assert.match(backdrop[0], /position: fixed/)
+  assert.ok(/z-index:\s*1300/.test(conversationCss), "the lightbox must sit above the pairing toast (z-index 1200)")
 })

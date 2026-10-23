@@ -551,6 +551,9 @@ type TranslationKey =
   | 'pair.qrLabel'
   | 'pair.qrUnavailable'
   | 'pair.address'
+  | 'pair.addressHint'
+  | 'pair.addressInvalid'
+  | 'pair.suggestedAddresses'
   | 'pair.expiresIn'
   | 'pair.expiredTitle'
   | 'pair.expiredBody'
@@ -1185,6 +1188,9 @@ const translations: Record<LanguageCode, Partial<Record<TranslationKey, string>>
     'pair.qrLabel': 'Machine pairing QR code',
     'pair.qrUnavailable': 'The pairing code could not be rendered. Regenerate it and try again.',
     'pair.address': 'Address',
+    'pair.addressHint': 'Use an address this phone can reach. For Docker, use the host address and published port.',
+    'pair.addressInvalid': 'Enter an HTTP(S) address with a port. Localhost, loopback and wildcard addresses cannot be used by a phone.',
+    'pair.suggestedAddresses': 'Suggested addresses',
     'pair.expiresIn': 'Expires in {time}',
     'pair.expiredTitle': 'Pairing code expired',
     'pair.expiredBody': 'A pairing code stays valid for 5 minutes. Regenerate one to connect a phone.',
@@ -1819,6 +1825,9 @@ const translations: Record<LanguageCode, Partial<Record<TranslationKey, string>>
     'pair.qrLabel': 'Codice QR di abbinamento macchina',
     'pair.qrUnavailable': 'Impossibile mostrare il codice di abbinamento. Rigeneralo e riprova.',
     'pair.address': 'Indirizzo',
+    'pair.addressHint': 'Usa un indirizzo raggiungibile dal telefono. Per Docker, usa l’indirizzo dell’host e la porta pubblicata.',
+    'pair.addressInvalid': 'Inserisci un indirizzo HTTP(S) con una porta. Localhost, loopback e indirizzi jolly non sono raggiungibili dal telefono.',
+    'pair.suggestedAddresses': 'Indirizzi suggeriti',
     'pair.expiresIn': 'Scade tra {time}',
     'pair.expiredTitle': 'Codice di abbinamento scaduto',
     'pair.expiredBody': 'Un codice di abbinamento resta valido per 5 minuti. Rigenerane uno per collegare un telefono.',
@@ -2453,6 +2462,9 @@ const translations: Record<LanguageCode, Partial<Record<TranslationKey, string>>
     'pair.qrLabel': '機器配對 QR 碼',
     'pair.qrUnavailable': '無法顯示配對碼。請重新產生後再試。',
     'pair.address': '位址',
+    'pair.addressHint': '請使用手機可連線的位址。Docker 請使用主機位址及對外發布的連接埠。',
+    'pair.addressInvalid': '請輸入含連接埠的 HTTP(S) 位址。手機無法使用 localhost、回送或萬用位址。',
+    'pair.suggestedAddresses': '建議位址',
     'pair.expiresIn': '{time} 後到期',
     'pair.expiredTitle': '配對碼已過期',
     'pair.expiredBody': '配對碼有效期為 5 分鐘。請重新產生以連接手機。',
@@ -3087,6 +3099,9 @@ const translations: Record<LanguageCode, Partial<Record<TranslationKey, string>>
     'pair.qrLabel': '机器配对二维码',
     'pair.qrUnavailable': '无法显示配对码。请重新生成后再试。',
     'pair.address': '地址',
+    'pair.addressHint': '请使用手机可连接的地址。Docker 请使用宿主机地址和对外发布的端口。',
+    'pair.addressInvalid': '请输入包含端口的 HTTP(S) 地址。手机无法使用 localhost、回环或通配地址。',
+    'pair.suggestedAddresses': '建议地址',
     'pair.expiresIn': '{time} 后过期',
     'pair.expiredTitle': '配对码已过期',
     'pair.expiredBody': '配对码有效期为 5 分钟。请重新生成以连接手机。',

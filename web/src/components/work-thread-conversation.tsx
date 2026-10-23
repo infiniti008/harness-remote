@@ -9,6 +9,7 @@ import { mergeLatestMessagePage, prependOlderMessagePage } from "../message-page
 import { isMachineTransportFailure as isTransportFailure } from "../machine-request-error"
 import { provenCopilotAutoDefault, shouldClearDeferredCatalogDefault } from "../native-session-model"
 import { nativeSessionRouteChanged, type NativeSessionRouteContinueInput, type NativeSessionRouteMachine } from "../native-session-routing"
+import { nativeSessionIsWorking } from "../native-session-v3-adapter"
 import type { SavedServerProfile } from "../serverProfiles"
 import { taskClient, type AgentModelScope } from "../taskClient"
 import { startTaskDeskSessionLiveRefresh } from "../taskdesk-session-live-refresh"
@@ -68,6 +69,51 @@ type SessionFeed = {
   hasMore: boolean
 }
 
+// A completed Session's transcript is durable: once a turn settles the window cannot grow on its own, so
+// re-opening a surface for an idle (non-running) Session does not need to re-read its full history from the
+// network a second time. That second read buys nothing - it only causes an empty-window flash and a scroll
+// reset. This module store keeps the last fetched window per Session id so an in-app navigation away and
+// back shows the exact same transcript instantly, with no reload flash and no jump to the bottom.
+//
+// It caches only durable *transcript data* - never a projection or runtime state - so the clean-start
+// invariant (a fresh projection on every open, conversations.delete on teardown) stays completely intact. A
+// Session that is still running is never served from the cache: it is always read live, so a live turn is
+// never shown from a stale window.
+const IDLE_FEED_CACHE_LIMIT = 64
+const idleFeedCache = new Map<string, SessionFeed>()
+
+function readIdleFeedCache(sessionID: string): SessionFeed | undefined {
+  return idleFeedCache.get(sessionID)
+}
+
+// Re-insert as newest so the Session the user keeps returning to is the last one evicted.
+function upsertIdleFeedCache(sessionID: string, feed: SessionFeed): void {
+  idleFeedCache.delete(sessionID)
+  idleFeedCache.set(sessionID, feed)
+  if (idleFeedCache.size > IDLE_FEED_CACHE_LIMIT) {
+    const oldest = idleFeedCache.keys().next().value
+    if (oldest !== undefined) idleFeedCache.delete(oldest)
+  }
+}
+
+// The window a re-open of a settled Session should paint on its very first frame. It is read from the
+// idle-cache module store so a navigation away and back shows the exact same transcript *synchronously,
+// before the first commit*. Seeding in a post-commit effect instead paints an empty "Loading
+// conversation…" panel first and then drops the window in under it - the layout change that reset the
+// scroll and looked like "history being re-inserted". A live or never-opened Session seeds nothing and
+// is read fresh by the loader below, so a running turn is never shown from a stale window. This is
+// durable *transcript data* again, never a projection or runtime, so the clean-start invariant holds.
+function seedIdleFeeds(conversation: ConversationRuntime, baseConfig: ServerConfig, agents: MachineAgentHost[]): Record<string, SessionFeed> {
+  const seeded: Record<string, SessionFeed> = {}
+  if (!nativeSessionIsWorking(conversation.status)) {
+    for (const target of sessionTargets(conversation, baseConfig, agents)) {
+      const cached = readIdleFeedCache(target.sessionID)
+      if (cached) seeded[target.sessionID] = cached
+    }
+  }
+  return seeded
+}
+
 type OptimisticPrompt = {
   text: string
   priorTurnID: string | null
@@ -115,6 +161,11 @@ type Props = {
   }
   /** Session-level context that shares the toolbar row instead of claiming a row of its own. */
   toolbarAccessory?: ReactNode
+  /**
+   * Identity this Session's transcript scroll position is remembered by. Forwarded to the shared
+   * transcript so reopening a Session restores its scroll instead of jumping to the bottom.
+   */
+  scrollScope?: string
 }
 
 function assistantMessageHasSignal(message: WorkThreadMessage): boolean {
@@ -345,14 +396,22 @@ export function WorkThreadConversation({
   interactionEnabled = true,
   onConnectionIssue,
   routing,
-  toolbarAccessory
+  toolbarAccessory,
+  scrollScope
 }: Props) {
   const draftStorageKey = `${DRAFT_STORAGE_PREFIX}${conversation.id}`
   const initialAgentID = agentForTurn(conversation, conversation.currentTurn)
   const initialModelKey = modelKey(lastModelForAgent(conversation, initialAgentID))
-  const [feeds, setFeeds] = useState<Record<string, SessionFeed>>({})
-  const feedsRef = useRef<Record<string, SessionFeed>>({})
-  const [loading, setLoading] = useState(true)
+  // Read the idle cache *before the first commit* so a re-open of a settled Session shows its transcript
+  // on the very first frame. Doing this in a post-commit effect first paints an empty "Loading
+  // conversation…" panel and then inserts the window under it, which is the layout change that reset the
+  // scroll. A live or never-opened Session seeds nothing here and is read fresh on the loader path
+  // below. Computed once at mount: it only feeds the lazy initializers, so an empty dependency array
+  // (not the caller's changing props) is deliberate.
+  const mountFeedSeed = useMemo(() => seedIdleFeeds(conversation, baseConfig, agents), [])
+  const [feeds, setFeeds] = useState<Record<string, SessionFeed>>(mountFeedSeed)
+  const feedsRef = useRef<Record<string, SessionFeed>>(mountFeedSeed)
+  const [loading, setLoading] = useState(Object.keys(mountFeedSeed).length === 0)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [draft, setDraft] = useState(() => localStorage.getItem(draftStorageKey) || "")
   const [attachments, setAttachments] = useState<AttachmentPart[]>([])
@@ -465,6 +524,11 @@ export function WorkThreadConversation({
   }, [])
 
   useEffect(() => { feedsRef.current = feeds }, [feeds])
+  // Mirror the last rendered window back to the module store so a re-open of a settled Session shows the
+  // same transcript without a network reread. This runs for initial load, tail refresh, and older paging.
+  useEffect(() => {
+    for (const [session, feed] of Object.entries(feeds)) upsertIdleFeedCache(session, feed)
+  }, [feeds])
   useEffect(() => { targetAgentIDRef.current = targetAgentID }, [targetAgentID])
   useEffect(() => {
     const timer = window.setTimeout(() => persistDraft(draftStorageKey, draftRef.current), DRAFT_PERSIST_DEBOUNCE_MS)
@@ -475,9 +539,19 @@ export function WorkThreadConversation({
   useEffect(() => () => persistDraft(draftStorageKey, draftRef.current), [draftStorageKey, persistDraft])
 
   useEffect(() => {
-    setFeeds({})
-    feedsRef.current = {}
-    setLoading(true)
+    // A re-open of an idle (non-running) Session must not re-read its full transcript a second time, nor
+    // flash an empty window or reset the scroll: seed the last fetched window synchronously from the module
+    // store. A Session that is still running is never served from the cache - it is always read live below.
+    const seeded: Record<string, SessionFeed> = {}
+    if (!nativeSessionIsWorking(conversation.status)) {
+      for (const target of sessionTargets(conversation, baseConfig, agents)) {
+        const cached = readIdleFeedCache(target.sessionID)
+        if (cached) seeded[target.sessionID] = cached
+      }
+    }
+    setFeeds(seeded)
+    feedsRef.current = seeded
+    setLoading(Object.keys(seeded).length === 0)
     setError(null)
     setTranscriptError(null)
     setModelError(null)
@@ -1266,6 +1340,7 @@ ${current}` : text) : current)
       {error ? <div className="tdw-chat-error" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>×</button></div> : null}
 
       <TaskDeskConversation
+        scrollScope={scrollScope}
         messages={presentedTimeline}
         agentLabel={pendingAgentLabel}
         agentBackend={pendingAgentBackend}

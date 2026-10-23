@@ -464,6 +464,7 @@ export function NativeSessionObserver({
 
       <WorkThreadConversation
         key={target.key}
+        scrollScope={target.key}
         conversation={presentedConversation}
         baseConfig={target.config}
         agents={[agent]}

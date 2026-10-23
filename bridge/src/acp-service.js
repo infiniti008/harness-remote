@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promis
 import path from "node:path"
 import { selectableAcpModelValue, modelConfigOptionFromSessionResponse, modelValueIsExcluded, normalizedAcpModelCandidates, splitInlineAcpModelVariant } from "./agent-model-catalog.js"
 import { TranscriptCache } from "./transcript-cache.js"
+import { DEFAULT_PROMPT_IDLE_TIMEOUT_MS } from "./config.js"
 import {
   listExtensionActions,
   loadExtensionActionState,
@@ -608,6 +609,7 @@ export class AcpService {
   #reloadOnHistoryRefresh
   #replaySettleMs
   #promptSettleMs
+  #promptIdleTimeoutMs
   #preferListedTitles
   #nativeRenameCommand
   #journalPageWhileOwned
@@ -643,6 +645,7 @@ export class AcpService {
     // late reasoning chunk is settled with the rest of the completed turn rather than becoming a
     // permanent Activity spinner.
     promptSettleMs = 0,
+    promptIdleTimeoutMs = DEFAULT_PROMPT_IDLE_TIMEOUT_MS,
     preferListedTitles = false,
     nativeRenameCommand,
     /**
@@ -702,6 +705,7 @@ export class AcpService {
     this.#reloadOnHistoryRefresh = reloadOnHistoryRefresh
     this.#replaySettleMs = replaySettleMs
     this.#promptSettleMs = promptSettleMs
+    this.#promptIdleTimeoutMs = promptIdleTimeoutMs
     this.#preferListedTitles = preferListedTitles
     this.#nativeRenameCommand = nativeRenameCommand
     this.#journalPageWhileOwned = journalPageWhileOwned
@@ -749,6 +753,7 @@ export class AcpService {
   diagnostics() {
     return {
       transcriptCache: this.#messages.stats(),
+      promptIdleTimeoutMs: this.#promptIdleTimeoutMs,
       activeSessions: this.#active.size,
       queuedSessions: this.#queues.size,
       inFlightLoads: this.#loads.size,
@@ -1849,7 +1854,7 @@ export class AcpService {
 
   async #requestPromptWithRecovery(sessionID, params) {
     try {
-      return await this.#acp.request("session/prompt", params, 300_000)
+      return await this.#acp.request("session/prompt", params, this.#promptIdleTimeoutMs)
     } catch (error) {
       if (!this.#recoverMissingSessionOnPrompt || !missingAcpSession(error)) throw error
       // The replay below rebuilds the transcript from what the harness stored, which does not yet
@@ -1866,7 +1871,7 @@ export class AcpService {
       this.#chunkMessageIDs.delete(`${sessionID}:user`)
       this.#chunkMessageIDs.delete(`${sessionID}:assistant`)
       this.#emit("message.updated", sessionID)
-      return this.#acp.request("session/prompt", params, 300_000)
+      return this.#acp.request("session/prompt", params, this.#promptIdleTimeoutMs)
     }
   }
 

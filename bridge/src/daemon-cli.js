@@ -65,7 +65,7 @@ export function parseDaemonOptions(args, environment = process.env, detect = res
       continue
     }
     bridgeArgs.push(option)
-    if (["--backend", "--host", "--port", "--username", "--password", "--acp-command", "--acp-arg", "--root", "--cors", "--state-dir"].includes(option)) {
+    if (["--backend", "--host", "--port", "--username", "--password", "--acp-command", "--acp-arg", "--root", "--cors", "--state-dir", "--prompt-idle-timeout"].includes(option)) {
       bridgeArgs.push(requireValue(args, index, option))
       index += 1
     }

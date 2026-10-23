@@ -606,3 +606,87 @@
   color: var(--td3-muted);
   font-size: 10px;
 }
+
+/* Clicking a sent image thumbnail raises a small, centered lightbox for a full-size view. The image
+   is a data: URL on the part, so it needs no network — and on the plain-HTTP LAN the app runs on that
+   is the only always-available path. z-index 1300 sits above the fixed pairing toast (z-index 1200). */
+.uw-message-attachment-open {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: zoom-in;
+  overflow: hidden;
+  line-height: 0;
+}
+
+.uw-message-attachment-open:focus-visible {
+  outline: 2px solid var(--td3-blue-border);
+  outline-offset: 2px;
+}
+
+.uw-image-lightbox-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: var(--td3-veil);
+  backdrop-filter: blur(10px);
+}
+
+.uw-image-lightbox {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  max-width: min(96vw, 820px);
+  max-height: 92vh;
+  padding: 12px;
+  border: 1px solid var(--td3-border-strong);
+  border-radius: 14px;
+  background: var(--td3-panel-2);
+  color: var(--td3-text);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.45);
+}
+
+.uw-image-lightbox-image {
+  display: block;
+  max-width: 100%;
+  max-height: 74vh;
+  margin: 0 auto;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.uw-image-lightbox-caption {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0 4px;
+  min-width: 0;
+  color: var(--td3-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.uw-image-lightbox-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--td3-border);
+  border-radius: 9px;
+  background: var(--td3-raise-2);
+  color: var(--td3-text-2);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}

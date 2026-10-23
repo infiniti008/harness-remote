@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { MachineHttpError } from "../machine-request-error"
 import { readMachinePairingGrantStatus, requestMachinePairingGrant } from "../machineClient"
-import type { MachinePairingGrant } from "../machine-pairing"
+import { machinePairingLinkForEndpoint, pairingGrantForConnection, type MachinePairingGrant } from "../machine-pairing"
 import { pairingQRCode } from "../pairing-qr"
 import { useDialogDismiss } from "../useDialogDismiss"
 import { useTranslator } from "../useTranslator"
@@ -30,11 +30,11 @@ export function pairingCountdown(remainingMs: number): string {
   return `${minutes}:${String(seconds).padStart(2, "0")}`
 }
 
-/** A regenerate that arrives after the user picked an address must keep that address selected; a
- *  pickup that the fresh grant no longer offers falls back to the daemon's first choice. */
+/** Keep a manually entered published address across regeneration, even if the daemon only knows
+ * its container interfaces. The fresh grant replaces the token, not the user's network choice. */
 export function preferredPairingEndpoint(grant: MachinePairingGrant, previous: string | null): string | null {
   if (!grant.links.length) return null
-  return previous && grant.links.some((link) => link.endpoint === previous) ? previous : grant.links[0].endpoint
+  return (previous && machinePairingLinkForEndpoint(grant, previous)?.endpoint) || grant.links[0].endpoint
 }
 
 /** Distinguish "this daemon predates the grant route" from "the request failed". An old daemon
@@ -74,7 +74,7 @@ export function MachinePairingDialog({ machine, onClose, onOpenSettings }: { mac
     const run = ++issueRun.current
     setState({ phase: "preparing" })
     try {
-      const grant = await requestMachinePairingGrant(machine.config)
+      const grant = pairingGrantForConnection(await requestMachinePairingGrant(machine.config), machine.config)
       if (issueRun.current !== run) return
       if (grant.loopbackOnly) {
         setState({ phase: "loopback" })
@@ -137,8 +137,8 @@ export function MachinePairingDialog({ machine, onClose, onOpenSettings }: { mac
 
   const qr = useMemo(() => {
     if (state.phase !== "ready") return null
-    const link = state.grant.links.find((candidate) => candidate.endpoint === state.endpoint) ?? state.grant.links[0]
-    return pairingQRCode(link.uri)
+    const link = machinePairingLinkForEndpoint(state.grant, state.endpoint)
+    return link ? pairingQRCode(link.uri) : null
   }, [state])
 
   return (
@@ -177,19 +177,38 @@ export function MachinePairingDialog({ machine, onClose, onOpenSettings }: { mac
                   <path d={qr.path} />
                 </svg>
               ) : (
-                <p role="alert">{t("pair.qrUnavailable")}</p>
+                <p role="alert">{t(machinePairingLinkForEndpoint(state.grant, state.endpoint) ? "pair.qrUnavailable" : "pair.addressInvalid")}</p>
               )}
+              <label className="uw-machine-pairing-address">
+                <span>{t("pair.address")}</span>
+                <input
+                  type="url"
+                  inputMode="url"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  data-machine-pairing-endpoint
+                  value={state.endpoint}
+                  aria-invalid={!machinePairingLinkForEndpoint(state.grant, state.endpoint)}
+                  onChange={(event) => {
+                    setSelectedEndpoint(event.target.value)
+                    setState({ ...state, endpoint: event.target.value })
+                  }}
+                />
+                <small>{t("pair.addressHint")}</small>
+              </label>
               {state.grant.links.length > 1 ? (
                 <label className="uw-machine-pairing-address">
-                  <span>{t("pair.address")}</span>
+                  <span>{t("pair.suggestedAddresses")}</span>
                   <select
                     data-machine-pairing-address
-                    value={state.endpoint}
+                    value={state.grant.links.some((link) => link.endpoint === state.endpoint) ? state.endpoint : ""}
                     onChange={(event) => {
                       setSelectedEndpoint(event.target.value)
                       setState({ ...state, endpoint: event.target.value })
                     }}
                   >
+                    <option value="" disabled>{t("pair.address")}</option>
                     {state.grant.links.map((link) => <option value={link.endpoint} key={link.endpoint}>{link.endpoint}</option>)}
                   </select>
                 </label>

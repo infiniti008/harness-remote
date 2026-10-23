@@ -7,6 +7,7 @@ import { closeOwnedChildProcess, ownChildProcess } from "./managed-child-process
 // than a warm start. Ten seconds failed on a cold PI adapter while npm was still fetching.
 const START_TIMEOUT_MS = 90_000
 const REQUEST_TIMEOUT_MS = 30_000
+const PROMPT_CANCEL_TIMEOUT_MS = 5_000
 /** Kept so a failed handshake can report why the adapter died instead of just its exit code. */
 const STDERR_KEPT_CHARS = 600
 
@@ -92,7 +93,8 @@ export class AcpClient extends EventEmitter {
       ...(pending.configID ? { configID: pending.configID } : {}),
       ageMs: Math.max(0, now - pending.startedAt),
       idleMs: Math.max(0, now - pending.lastActivityAt),
-      timeoutMs: pending.timeoutMs
+      timeoutMs: pending.timeoutMs,
+      ...(pending.cancelRequested ? { cancelling: true } : {})
     }))
     const listenerCounts = Object.fromEntries(
       this.eventNames().map((eventName) => [String(eventName), this.listenerCount(eventName)])
@@ -222,6 +224,14 @@ export class AcpClient extends EventEmitter {
     if (!this.#child || this.#child.killed || !this.#child.stdin.writable) {
       return Promise.reject(new Error("ACP adapter is not running"))
     }
+    const activePrompt = method === "session/prompt" && typeof params?.sessionId === "string"
+      ? [...this.#pending.values()].find((pending) => pending.method === "session/prompt" && pending.sessionID === params.sessionId)
+      : undefined
+    if (activePrompt) {
+      return Promise.reject(new Error(activePrompt.cancelRequested
+        ? "The previous turn is still stopping. Wait for cancellation before retrying this session."
+        : "This session already has an active ACP prompt. Stop it before retrying."))
+    }
     const id = this.#nextID++
     const message = JSON.stringify({ jsonrpc: "2.0", id, method, params })
     return new Promise((resolve, reject) => {
@@ -242,8 +252,22 @@ export class AcpClient extends EventEmitter {
         resetTimeout: undefined
       }
       const expire = () => {
-        this.#pending.delete(id)
-        reject(new Error(`ACP adapter request timed out: ${method}`))
+        const error = new Error(`ACP adapter request timed out: ${method}${method === "session/prompt" ? ` (no session activity for ${timeoutMs}ms; cancellation requested)` : ""}`)
+        if (method !== "session/prompt" || !pending.sessionID) {
+          this.#pending.delete(id)
+          reject(error)
+          return
+        }
+        // Dropping the RPC alone leaves the native turn running. Cancel it and wait briefly for
+        // its original response, so a queued prompt cannot race the adapter's active-turn cleanup.
+        pending.timeoutError = error
+        try {
+          this.notify("session/cancel", { sessionId: pending.sessionID })
+        } catch {
+          clearTimeout(pending.timer)
+          pending.timer = undefined
+          reject(error)
+        }
       }
       pending.resetTimeout = () => {
         pending.lastActivityAt = Date.now()
@@ -265,6 +289,20 @@ export class AcpClient extends EventEmitter {
   notify(method, params) {
     if (!this.#child || this.#child.killed || !this.#child.stdin.writable) {
       throw new Error("ACP adapter is not running")
+    }
+    if (method === "session/cancel" && typeof params?.sessionId === "string") {
+      for (const pending of this.#pending.values()) {
+        if (pending.method !== "session/prompt" || pending.sessionID !== params.sessionId || pending.cancelRequested) continue
+        pending.cancelRequested = true
+        pending.resetTimeout = undefined
+        clearTimeout(pending.timer)
+        pending.timer = setTimeout(() => {
+          pending.timer = undefined
+          pending.timeoutError ??= new Error("ACP adapter did not confirm cancellation. This session is still stopping; retry after the native turn ends.")
+          pending.reject(pending.timeoutError)
+          // Retain the writer guard until the original response or process exit confirms teardown.
+        }, PROMPT_CANCEL_TIMEOUT_MS)
+      }
     }
     this.#child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`)
   }
@@ -334,7 +372,8 @@ export class AcpClient extends EventEmitter {
       if (!pending) return
       clearTimeout(pending.timer)
       this.#pending.delete(message.id)
-      if (message.error) pending.reject(new Error(acpErrorMessage(message.error)))
+      if (pending.timeoutError) pending.reject(pending.timeoutError)
+      else if (message.error) pending.reject(new Error(acpErrorMessage(message.error)))
       else pending.resolve(message.result)
       return
     }

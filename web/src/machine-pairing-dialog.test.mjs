@@ -39,7 +39,8 @@ test("regenerating keeps the address the user picked when the new grant still of
     links: [link("http://192.168.1.20:4097"), link("http://10.0.0.5:4097")]
   }
   assert.equal(preferredPairingEndpoint(grant, "http://10.0.0.5:4097"), "http://10.0.0.5:4097", "an offered address must survive regeneration")
-  assert.equal(preferredPairingEndpoint(grant, "http://192.168.99.99:4097"), "http://192.168.1.20:4097", "a vanished address must fall back to the daemon's first choice")
+  assert.equal(preferredPairingEndpoint(grant, "http://192.168.99.99:4901"), "http://192.168.99.99:4901", "a manually entered published address must survive regeneration")
+  assert.equal(preferredPairingEndpoint(grant, "http://127.0.0.1:4097"), "http://192.168.1.20:4097", "a phone cannot use the granting browser's loopback")
   assert.equal(preferredPairingEndpoint(grant, null), "http://192.168.1.20:4097")
   assert.equal(preferredPairingEndpoint({ expiresAt: grant.expiresAt, loopbackOnly: false, links: [] }, "http://192.168.1.20:4097"), null)
 })

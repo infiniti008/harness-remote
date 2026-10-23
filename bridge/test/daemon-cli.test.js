@@ -34,11 +34,13 @@ test("daemon forwards bridge options and consumes OpenCode-specific options", ()
     "--opencode-host", "127.0.0.2",
     "--opencode-port", "4901",
     "--opencode-command", "/tools/opencode",
+    "--prompt-idle-timeout", "2400000",
     "--root", "/work"
   ], loopbackEnv)
 
   assert.equal(parsed.config.backend, "claude")
   assert.equal(parsed.config.port, 4900)
+  assert.equal(parsed.config.promptIdleTimeoutMs, 2_400_000)
   assert.deepEqual(parsed.config.roots, ["/work"])
   assert.equal(parsed.openCodeHost, "127.0.0.2")
   assert.equal(parsed.openCodePort, 4901)

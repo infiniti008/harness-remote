@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import jsQR from "jsqr"
 import { pairingQRCode, pairingQRPath } from "./pairing-qr.ts"
+import { machinePairingLinkForEndpoint, pairingGrantForConnection, parseMachinePairingActivation } from "./machine-pairing.ts"
 
 const SCALE = 8
 
@@ -45,6 +46,22 @@ test("a longer LAN endpoint stays readable, so address picking cannot silently b
   assert.ok(code)
   const { data, side } = rasterize(code)
   assert.equal(jsQR(data, side, side)?.data, uri)
+})
+
+test("a phone scan of a Docker QR uses the published address and the original one-time authority", () => {
+  const grant = {
+    expiresAt: 1790000000000,
+    loopbackOnly: false,
+    links: [{ endpoint: "http://192.168.65.3:4097", uri: pairingURI("http://192.168.65.3:4097") }]
+  }
+  const config = { backend: "opencode", host: "192.168.1.42", port: 4097, username: "harness", password: "secret" }
+  const adjusted = pairingGrantForConnection(grant, config)
+  for (const endpoint of [adjusted.links[0].endpoint, "http://10.42.0.10:4901"]) {
+    const link = machinePairingLinkForEndpoint(adjusted, endpoint)
+    const { data, side } = rasterize(pairingQRCode(link.uri))
+    const activation = parseMachinePairingActivation(jsQR(data, side, side)?.data)
+    assert.deepEqual(activation, { endpoint, token: "a".repeat(43), expiresAt: grant.expiresAt })
+  }
 })
 
 test("rendering is deterministic and different URIs produce different codes", () => {

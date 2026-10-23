@@ -1,3 +1,4 @@
+import { useState } from "react"
 import { isInternalProtocolPart } from "../activity-model"
 import { useActivityPreferences } from "../activity-preferences"
 import { groupConversationParts, type ConversationPartGroup } from "../conversation-parts"
@@ -5,6 +6,7 @@ import { PaperclipIcon } from "../Icons"
 import type { MessageEnvelope, MessagePart } from "../types"
 import { ActivitySection, UnsupportedPart } from "./activity-timeline"
 import { CopyButton, Markdown } from "./message-markdown"
+import { ImageLightbox } from "./image-lightbox"
 
 type ContentGroupValue = Extract<ConversationPartGroup, { kind: "content" }>
 type TaskDeskEnvelope = MessageEnvelope & { taskdesk?: { active?: boolean } }
@@ -82,14 +84,26 @@ function hasTerminalAssistantText(parts: MessagePart[], reportedError = ""): boo
 function AttachmentPartCard({ part }: { part: MessagePart }) {
   const label = part.filename || "Attached image"
   const isImage = (part.mime || "").startsWith("image/") && typeof part.url === "string" && part.url.startsWith("data:")
+  const imageUrl = isImage ? part.url as string : ""
+  // The image is a data: URL carried on the part itself, so clicking the thumbnail raises a centered
+  // lightbox for a full-size view. It needs no fetch or clipboard — the bytes are already on the page,
+  // which is also what makes the preview work on the plain-HTTP LAN the app runs on.
+  const [preview, setPreview] = useState(false)
   return (
-    <div className="uw-message-attachment" title={label}>
-      {isImage ? <img src={part.url} alt={label} /> : <span className="uw-message-attachment-icon"><PaperclipIcon size={14} /></span>}
-      <span>
-        <strong>{label}</strong>
-        <small>{part.mime || "attachment"}</small>
-      </span>
-    </div>
+    <>
+      <div className="uw-message-attachment" title={label}>
+        {isImage ? (
+          <button type="button" className="uw-message-attachment-open" onClick={() => setPreview(true)} aria-label={`View ${label}`}>
+            <img src={imageUrl} alt={label} />
+          </button>
+        ) : <span className="uw-message-attachment-icon"><PaperclipIcon size={14} /></span>}
+        <span>
+          <strong>{label}</strong>
+          <small>{part.mime || "attachment"}</small>
+        </span>
+      </div>
+      {preview && imageUrl ? <ImageLightbox src={imageUrl} label={label} onClose={() => setPreview(false)} /> : null}
+    </>
   )
 }
 

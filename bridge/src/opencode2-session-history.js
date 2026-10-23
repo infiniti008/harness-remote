@@ -1,10 +1,12 @@
 import { spawn } from "node:child_process"
-import { ownChildProcess } from "./managed-child-process.js"
+import { mkdtemp, open, readFile, rm, stat } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import path from "node:path"
+import { closeOwnedChildProcess, ownChildProcess } from "./managed-child-process.js"
 
-// OpenCode's standalone export streams the JSON to stdout and can exit 0 with a truncated document
-// when several exports of the same Session overlap, which happens while the app polls a live turn.
-// A truncated read is not a real history failure, so concurrent reads of one Session are coalesced
-// and a failed export is retried a few times before it is surfaced as an error.
+// The CLI can exit before a pipe drains, even for a single large export. Give it a regular file
+// descriptor so stdout writes finish before exit. Coalesce concurrent readers and retry transient
+// failures independently of that transport workaround.
 const EXPORT_ATTEMPTS = 3
 const EXPORT_RETRY_BACKOFF_MS = 75
 const MAX_EXPORT_BYTES = 64 * 1024 * 1024
@@ -52,39 +54,47 @@ export function openCode2ExportMessages(sessionID, exported) {
 /** Read history without opening the original project (which may have been removed). */
 export function createOpenCode2HistoryLoader({ command = "opencode2", args = ["acp"], runExport } = {}) {
   const prefix = args.at(-1) === "acp" ? args.slice(0, -1) : []
-  const readExport = runExport ?? ((sessionID) => new Promise((resolve, reject) => {
-    const shim = process.platform === "win32" && /\.(cmd|bat)$/i.test(command)
-    // A private server exits with the export; history reads must not leave a background service
-    // holding an isolated test database (or connect to a service with a different data root).
-    const exportArgs = [...prefix, "session", "export", "--standalone", sessionID]
-    const child = ownChildProcess(spawn(shim ? process.env.ComSpec ?? "cmd.exe" : command,
-      shim ? ["/d", "/s", "/c", command, ...exportArgs] : exportArgs,
-      { stdio: ["ignore", "pipe", "pipe"], windowsHide: true }))
-    let output = ""
-    const timer = setTimeout(() => {
-      child.kill()
-      const error = new Error("OpenCode 2 history export timed out")
-      error.nonRetryable = true
-      reject(error)
-    }, 30_000)
-    child.stdout.setEncoding("utf8")
-    child.stdout.on("data", (chunk) => {
-      output += chunk
-      if (Buffer.byteLength(output) > MAX_EXPORT_BYTES) {
-        child.kill()
+  const readExport = runExport ?? (async (sessionID) => {
+    const directory = await mkdtemp(path.join(tmpdir(), "harness-opencode-export-"))
+    const file = path.join(directory, "session.json")
+    let output
+    let child
+    try {
+      output = await open(file, "wx", 0o600)
+      const shim = process.platform === "win32" && /\.(cmd|bat)$/i.test(command)
+      // A private server exits with the export; history reads must not leave a background service
+      // holding an isolated test database (or connect to a service with a different data root).
+      const exportArgs = [...prefix, "session", "export", "--standalone", sessionID]
+      await new Promise((resolve, reject) => {
+        child = ownChildProcess(spawn(shim ? process.env.ComSpec ?? "cmd.exe" : command,
+          shim ? ["/d", "/s", "/c", command, ...exportArgs] : exportArgs,
+          { stdio: ["ignore", output.fd, "pipe"], windowsHide: true }))
+        const timer = setTimeout(() => {
+          child.kill()
+          const error = new Error("OpenCode 2 history export timed out")
+          error.nonRetryable = true
+          reject(error)
+        }, 30_000)
+        child.stderr.resume()
+        child.once("error", (error) => { clearTimeout(timer); reject(error) })
+        child.once("close", (code) => {
+          clearTimeout(timer)
+          if (code !== 0) return reject(new Error(`OpenCode 2 history export failed (exit ${code})`))
+          resolve()
+        })
+      })
+      if ((await stat(file)).size > MAX_EXPORT_BYTES) {
         const error = new Error("OpenCode 2 history export exceeds 64 MiB")
         error.nonRetryable = true
-        reject(error)
+        throw error
       }
-    })
-    child.stderr.resume()
-    child.once("error", (error) => { clearTimeout(timer); reject(error) })
-    child.once("close", (code) => {
-      clearTimeout(timer)
-      if (code !== 0) return reject(new Error(`OpenCode 2 history export failed (exit ${code})`))
-      try { resolve(JSON.parse(output)) } catch { reject(new Error("OpenCode 2 returned an invalid history export")) }
-    })
-  }))
+      try { return JSON.parse(await readFile(file, "utf8")) } catch { throw new Error("OpenCode 2 returned an invalid history export") }
+    } finally {
+      await closeOwnedChildProcess(child)
+      await output?.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
   const readExportOnce = async (sessionID) => {
     let lastError
     for (let attempt = 1; attempt <= EXPORT_ATTEMPTS; attempt += 1) {

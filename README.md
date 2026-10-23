@@ -49,6 +49,14 @@ Common options are optional:
 npx harness-remote --root ~/dev
 npx harness-remote --port 4900
 npx harness-remote --cors https://giuliastro.github.io
+
+Long ACP turns have no total duration limit. The prompt inactivity watchdog allows 30 minutes
+without protocol events from that Session; text, reasoning and tool updates reset it. Override
+with `--prompt-idle-timeout <milliseconds>` or `HARNESS_REMOTE_PROMPT_IDLE_TIMEOUT_MS`.
+On expiry the gateway requests native cancellation before releasing the turn. Stop also waits
+for the native writer to finish before another prompt can reach the same Session; a delayed
+cancellation does not interrupt other Sessions. Provider HTTP timeouts are configured separately
+in the coding agent.
 ```
 
 ### Android

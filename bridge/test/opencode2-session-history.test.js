@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { spawnSync } from 'node:child_process'
 import test from 'node:test'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createOpenCode2HistoryLoader } from '../src/opencode2-session-history.js'
@@ -23,6 +23,26 @@ const exported = {
   ]
 }
 const historyLoader = () => createOpenCode2HistoryLoader({ runExport: async () => structuredClone(exported) })
+
+test('large CLI exports survive an immediate exit without truncating a stdout pipe', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'opencode2-export-flush-'))
+  try {
+    const cli = path.join(directory, 'fake-export.mjs')
+    await writeFile(cli, `
+      const text = 'x'.repeat(2 * 1024 * 1024)
+      const sessionID = process.argv.at(-1)
+      process.stdout.write(JSON.stringify({
+        info: { id: sessionID },
+        messages: [{ id: 'large', type: 'user', time: { created: 1 }, text, files: [] }]
+      }))
+      process.exit(0)
+    `)
+    const loader = createOpenCode2HistoryLoader({ command: process.execPath, args: [cli, 'acp'] })
+    const messages = await loader('ses_large_export')
+    assert.equal(messages.length, 1)
+    assert.equal(messages[0].parts[0].text.length, 2 * 1024 * 1024)
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
 class Native extends EventEmitter {
   requests = []
   async listSessions() { return [{ sessionId: 'ses_test', cwd: '/missing-opencode2-sandbox', title: 'Old test' }] }

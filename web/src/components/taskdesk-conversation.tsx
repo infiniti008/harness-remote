@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react"
-import { ATTACHMENT_MAX_COUNT, fileToAttachment, type AttachmentPart } from "../attachments"
+import { ATTACHMENT_MAX_COUNT, fileToAttachment, imageFilesFromClipboard, type AttachmentPart } from "../attachments"
 import type { QueuedPromptEntry } from "../mid-turn-policy"
 import type { CommandInfo, MessageEnvelope } from "../types"
 import { AlertIcon, ChatIcon, CloseIcon, JumpToBottomIcon, JumpToTopIcon, LoadingIcon, PaperclipIcon, StopCircleIcon } from "../Icons"
@@ -24,6 +24,122 @@ function harnessIconUrl(backend: string | undefined): string | undefined {
 }
 
 const NEAR_BOTTOM_PX = 96
+
+/**
+ * One remembered scroll position per transcript. Keyed by a caller-supplied `scrollScope` (the
+ * Session it belongs to) so that switching away from a Session and back to a recently opened one
+ * restores where the reader left off, instead of replaying "jump to the bottom" on every open even
+ * when the history had to be re-read. The position is clamped on restore, so a reconnect that changed
+ * the transcript cannot pin past the end of the new content. Bounded to an LRU so we do not retain
+ * the position of every Session the app has ever opened.
+ */
+type ScrollSnapshot = {
+  nearBottom: boolean
+  scrollTop: number
+  scrollHeight: number
+  clientHeight: number
+  updatedAt: number
+}
+
+const SCROLL_MEMORY_LIMIT = 64
+const SCROLL_MEMORY_STORAGE_KEY = "harness-remote.scroll-memory"
+const SCROLL_MEMORY_PERSIST_DELAY_MS = 200
+const scrollMemory = new Map<string, ScrollSnapshot>()
+
+// The in-memory store is fast and handles live switches within one page, but a hard reload or a PWA
+// teardown wipes it, so the remembered positions are mirrored to localStorage (the codebase's durable
+// home for UI state). A reader who left a Session scrolled up then reloaded keeps that spot on the next
+// open instead of falling back to the bottom, which is what "I reloaded but it still snaps" was about.
+function scrollStorage(): Storage | null {
+  try { return typeof globalThis.localStorage === "undefined" ? null : globalThis.localStorage }
+  catch { return null }
+}
+
+function serializeScrollMemory(): string {
+  const entries: Record<string, ScrollSnapshot> = {}
+  for (const key of scrollMemory.keys()) {
+    const snapshot = scrollMemory.get(key)
+    if (snapshot) entries[key] = snapshot
+  }
+  return JSON.stringify(entries)
+}
+
+function persistScrollMemoryNow(): void {
+  const store = scrollStorage()
+  if (!store) return
+  try { store.setItem(SCROLL_MEMORY_STORAGE_KEY, serializeScrollMemory()) }
+  catch { /* a private-mode or full store keeps the position for this page load only */ }
+}
+
+let scrollPersistTimer: ReturnType<typeof setTimeout> | undefined = undefined
+function scheduleScrollPersist(): void {
+  // Coalesce a burst of scroll-frame writes into a single durable write 200ms after the last one, so the
+  // frame-throttled onScroll handler cannot stall the page under continuous scrolling.
+  if (scrollPersistTimer !== undefined) return
+  scrollPersistTimer = setTimeout(() => {
+    scrollPersistTimer = undefined
+    persistScrollMemoryNow()
+  }, SCROLL_MEMORY_PERSIST_DELAY_MS)
+}
+
+let scrollUnloadWired = false
+function wireScrollPersistOnExit(): void {
+  // A hard reload or PWA exit tears down the in-memory store before its frame-throttled write can drain,
+  // so flush it when the page hides or unloads: that guarantees the last remembered spot is durable for
+  // the next open regardless of when, or whether, the scroll handler's timer got a turn to fire.
+  if (scrollUnloadWired || typeof window === "undefined") return
+  scrollUnloadWired = true
+  const flush = () => persistScrollMemoryNow()
+  window.addEventListener("pagehide", flush)
+  window.addEventListener("visibilitychange", () => {
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") persistScrollMemoryNow()
+  })
+}
+
+let scrollMemoryHydrated = false
+function readScrollMemory(scope: string | undefined): ScrollSnapshot | undefined {
+  if (!scope) return undefined
+  if (!scrollMemoryHydrated) {
+    // Reloaded or freshly launched: the in-memory store is empty, so rehydrate it from the durable copy
+    // the last session left behind. This is what makes reopen-after-reload restore the spot.
+    scrollMemoryHydrated = true
+    const store = scrollStorage()
+    if (store) {
+      try {
+        const parsed = JSON.parse(store.getItem(SCROLL_MEMORY_STORAGE_KEY) || "{}") as Record<string, ScrollSnapshot>
+        for (const key of Object.keys(parsed)) {
+          const snapshot = parsed[key]
+          // Only rehydrate well-formed entries so a corrupt or stale blob cannot poison a scope.
+          if (snapshot && typeof snapshot.nearBottom === "boolean" && typeof snapshot.scrollTop === "number") {
+            scrollMemory.delete(key)
+            scrollMemory.set(key, snapshot)
+          }
+        }
+      } catch { /* corrupt or private mode: start with an empty memory */ }
+    }
+  }
+  return scrollMemory.get(scope)
+}
+
+function writeScrollMemory(scope: string | undefined, element: HTMLElement, nearBottom: boolean): void {
+  if (!scope) return
+  // Re-insert as newest so the most recently used Session is the last to be evicted.
+  scrollMemory.delete(scope)
+  scrollMemory.set(scope, {
+    nearBottom,
+    scrollTop: element.scrollTop,
+    scrollHeight: element.scrollHeight,
+    clientHeight: element.clientHeight,
+    updatedAt: Date.now()
+  })
+  if (scrollMemory.size > SCROLL_MEMORY_LIMIT) {
+    const oldest = scrollMemory.keys().next().value
+    if (oldest !== undefined) scrollMemory.delete(oldest)
+  }
+  // Mirror to the durable store on a throttle; the unmount and page-exit flushes capture the very last
+  // spot without waiting for the throttle to drain.
+  scheduleScrollPersist()
+}
 const COMPOSER_MAX_HEIGHT_PX = 180
 const JUMP_AFFORDANCE_MAX_THRESHOLD = 320
 const JUMP_AFFORDANCE_MIN_RANGE = 240
@@ -73,12 +189,17 @@ type Props = {
    * available next to Stop.
    */
   canSendWhileWaiting?: boolean
+  /**
+   * The identity the transcript's scroll position is remembered for (the owning Session). Omitted
+   * means "no memory": the transcript behaves exactly as before and never reads or writes a position.
+   */
+  scrollScope?: string
 }
 
 type TranscriptProps = Pick<Props,
   "messages" | "agentLabel" | "agentBackend" | "loading" | "waiting" | "ready" | "hasMore" |
   "loadingOlder" | "onLoadOlder" | "sending" | "workingLabel" | "showWaitingIndicator" | "emptyText" |
-  "transcriptError" | "renderMessage"
+  "transcriptError" | "renderMessage" | "scrollScope"
 >
 
 type JumpAffordances = { top: boolean; bottom: boolean }
@@ -176,6 +297,7 @@ function transcriptPropsEqual(previous: TranscriptProps, next: TranscriptProps):
     && previous.showWaitingIndicator === next.showWaitingIndicator
     && previous.emptyText === next.emptyText
     && previous.transcriptError === next.transcriptError
+    && previous.scrollScope === next.scrollScope
 }
 
 /**
@@ -200,10 +322,16 @@ const ConversationTranscript = memo(function ConversationTranscript({
   showWaitingIndicator = true,
   emptyText = "This conversation has no messages yet.",
   transcriptError,
-  renderMessage
+  renderMessage,
+  scrollScope
 }: TranscriptProps) {
   const transcriptRef = useRef<HTMLDivElement>(null)
-  const nearBottomRef = useRef(true)
+  // Seed the "near bottom" intent from this scope's last remembered position, so reopening a Session
+  // the reader had scrolled up in does not pin its tail back down. A first open has no entry yet.
+  const restoreScrollRef = useRef<ScrollSnapshot | undefined>(scrollScope ? readScrollMemory(scrollScope) : undefined)
+  const nearBottomRef = useRef(restoreScrollRef.current?.nearBottom ?? true)
+  // Restore the exact saved position at most once per mount (guard against re-seeding on later renders).
+  const restoredRef = useRef(false)
   const preservingOlderRef = useRef(false)
   const loadOlderRef = useRef(onLoadOlder)
   const followFrameRef = useRef<number | undefined>(undefined)
@@ -227,10 +355,51 @@ const ConversationTranscript = memo(function ConversationTranscript({
     if (spacerRef.current) sizeLiveRoom(current, spacerRef.current)
   }
 
+  // Wire the one-time page-exit flush (reload / PWA teardown) the first time a transcript mounts.
+  useEffect(() => { wireScrollPersistOnExit() }, [])
+
   useEffect(() => () => {
     if (followFrameRef.current !== undefined) window.cancelAnimationFrame(followFrameRef.current)
     if (scrollFrameRef.current !== undefined) window.cancelAnimationFrame(scrollFrameRef.current)
+    // Persist the read position so reopening this scope restores it instead of snapping to the bottom.
+    // The passive cleanup can run after the surface is already detached, in which case its geometry reads
+    // zero and would poison the store, so only flush a surface that is still live and sized.
+    const element = transcriptRef.current
+    if (element && element.isConnected && element.clientHeight > 0) {
+      writeScrollMemory(scrollScope, element, nearBottomRef.current)
+      // A chat switch may be followed by an immediate navigation, so capture the final spot now rather
+      // than trusting the frame-throttled write to drain before the next render tears the surface down.
+      persistScrollMemoryNow()
+    }
   }, [])
+
+  // Restore the remembered position at most once per mount, on the first frame after the content has
+  // rendered. The surface re-reads and shows "Loading conversation…" before the messages appear, so
+  // this waits for that; it never fights an in-flight older-history load, and it keeps the reader's
+  // "I was scrolled up" intent by not claiming the tail as the new bottom for them.
+  useEffect(() => {
+    if (restoredRef.current) return
+    const restore = restoreScrollRef.current
+    const transcript = transcriptRef.current
+    if (!restore || !transcript || preservingOlderRef.current || loading || !ready) return
+    restoredRef.current = true
+    const frame = window.requestAnimationFrame(() => {
+      const current = transcriptRef.current
+      if (!current || preservingOlderRef.current) return
+      const bottom = Math.max(0, current.scrollHeight - current.clientHeight)
+      // A reader who had scrolled up left an offset measured from the bottom of that (possibly longer)
+      // window. Restore that offset, not the raw top distance: min(save, bottom) would collapse an
+      // "up in history" reader straight to the tail whenever the freshly re-read window is shorter, which
+      // looks like a jump to the bottom and then re-saves nearBottom as true, pinning every later open
+      // there too. A shorter window instead pushes the reader up to the top, which still reads as "up".
+      const offsetFromBottom = Math.max(0, restore.scrollHeight - restore.scrollTop - restore.clientHeight)
+      const target = Math.max(0, bottom - offsetFromBottom)
+      current.scrollTop = target
+      nearBottomRef.current = target >= bottom - NEAR_BOTTOM_PX ? restore.nearBottom : false
+      refreshJumpAffordances(current)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [loading, ready])
 
   liveRef.current = sending || waiting
 
@@ -385,6 +554,7 @@ const ConversationTranscript = memo(function ConversationTranscript({
             scrollFrameRef.current = undefined
             nearBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight <= NEAR_BOTTOM_PX
             refreshJumpAffordances(element)
+            writeScrollMemory(scrollScope, element, nearBottomRef.current)
           })
         }}
       >
@@ -485,6 +655,7 @@ export function TaskDeskConversation({
   queuedPrompts = [],
   onCancelQueuedPrompt,
   canSendWhileWaiting = false,
+  scrollScope,
   renderMessage
 }: Props) {
   const composerRef = useRef<HTMLTextAreaElement>(null)
@@ -569,6 +740,20 @@ export function TaskDeskConversation({
     if (canSend) void onSend()
   }
 
+  // A picker-selected image and a clipboard-pasted image share this one path: cap to the room still
+  // free, run each through the same canvas normalisation, and hand the prepared parts back up.
+  async function attachImageFiles(files: File[]) {
+    const room = Math.max(0, ATTACHMENT_MAX_COUNT - attachments.length)
+    const chosen = files.slice(0, room)
+    if (!chosen.length) return
+    try {
+      const prepared = await Promise.all(chosen.map((file) => fileToAttachment(file)))
+      onAttachmentsChange?.([...attachments, ...prepared])
+    } catch (reason) {
+      onAttachmentError?.(reason instanceof Error ? reason.message : String(reason))
+    }
+  }
+
   return (
     <div className="uw-conversation-core">
       <ConversationTranscript
@@ -587,6 +772,7 @@ export function TaskDeskConversation({
         emptyText={emptyText}
         transcriptError={transcriptError}
         renderMessage={renderMessage}
+        scrollScope={scrollScope}
       />
 
       <div className="uw-composer-shell">
@@ -660,6 +846,14 @@ export function TaskDeskConversation({
           value={draft}
           onChange={(event) => onDraftChange(event.target.value)}
           onKeyDown={onComposerKeyDown}
+          onPaste={(event) => {
+            // A pasted image is attached like a picker pick, never pasted as raw bytes into the body.
+            if (!attachmentsSupported) return
+            const pasted = imageFilesFromClipboard(event.clipboardData)
+            if (!pasted.length) return
+            event.preventDefault()
+            void attachImageFiles(pasted)
+          }}
           placeholder={waiting ? `${agentLabel} is working…` : placeholder || `Continue with ${agentLabel}…`}
           rows={3}
           enterKeyHint={touchFirst ? "enter" : "send"}
@@ -678,17 +872,9 @@ export function TaskDeskConversation({
                   accept="image/*"
                   multiple
                   hidden
-                  onChange={async (event) => {
-                    const room = Math.max(0, ATTACHMENT_MAX_COUNT - attachments.length)
-                    const chosen = Array.from(event.target.files ?? []).slice(0, room)
+                  onChange={(event) => {
+                    attachImageFiles(Array.from(event.target.files ?? []))
                     event.target.value = ""
-                    if (!chosen.length) return
-                    try {
-                      const prepared = await Promise.all(chosen.map((file) => fileToAttachment(file)))
-                      onAttachmentsChange?.([...attachments, ...prepared])
-                    } catch (reason) {
-                      onAttachmentError?.(reason instanceof Error ? reason.message : String(reason))
-                    }
                   }}
                 />
                 <button

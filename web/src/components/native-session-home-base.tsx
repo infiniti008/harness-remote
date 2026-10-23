@@ -440,6 +440,11 @@ export function NativeSessionHome({
   const [loadingOlderMachines, setLoadingOlderMachines] = useState<ReadonlySet<string>>(() => new Set())
   const olderRequests = useRef(new Set<string>())
   const [olderSessionErrors, setOlderSessionErrors] = useState<Record<string, string | undefined>>({})
+  // Latch the machines that ever exposed a next cursor so the "Load older Sessions" pagination
+  // stays mounted through a working Session's brief state / first-read transitions. Without this,
+  // those transitions unmount+remount the button and read as the "blink" the user sees while the
+  // agent works. Reset whenever the machine set is re-read (mirrors the page cache lifecycle).
+  const [olderKnownMachines, setOlderKnownMachines] = useState<Set<string>>(() => new Set())
   const [query, setQuery] = useState("")
   const [filter, setFilter] = useState<SessionFilter>("all")
   const [machineFilter, setMachineFilter] = useState("")
@@ -597,6 +602,17 @@ export function NativeSessionHome({
       if (authoritativeRefresh) authoritativeRefreshApplied.current = authoritativeRefreshToken
       setLoadedSignature(endpointSignature)
       setCurrentSignature(machineSignature)
+      // Refresh the latch from the same read that refreshes the cache, so the button mount survives
+      // a transient clear/reload instead of blinking. It follows the machine set and is dropped
+      // automatically by the guarded updater when a no-cursor read replaces it.
+      const olderMachines = new Set(
+        [...pageCache.current.values()].filter((entry) => entry.nextCursor).map((entry) => entry.machineID)
+      )
+      setOlderKnownMachines((current) =>
+        current.size === olderMachines.size && [...olderMachines].every((machine) => current.has(machine))
+          ? current
+          : olderMachines
+      )
     }).catch((reason) => {
       if (!cancelled) {
         setLoadedSignature(endpointSignature)
@@ -1248,7 +1264,11 @@ export function NativeSessionHome({
             // Empty pages are skipped within a bounded discovery read. If that budget runs out,
             // a remaining cursor still means unscanned history: keep manual continuation reachable
             // even when no rows have been found yet. A fully scanned empty machine has no cursor.
-            const hasOlderSessions = state === "online" && olderPageTargets.some(([, entry]) => entry.machine.id === machine.id)
+            // Mount the pagination from the per-signature latch rather than the transient per-machine
+            // `state`/`loaded`: a working Session briefly flips those and used to unmount+remount
+            // this button every time, the visible "blink". The button is only *disabled* by load
+            // state, never unmounted, while a machine is online or transiently reloading.
+            const olderKnownForMachine = olderKnownMachines.has(machine.id)
             const reconnecting = state === "online" && Boolean(error)
             return (
               <section className={`hr-native-machine-group ${state}${machineCollapsed ? " collapsed" : ""}`} key={machine.id} aria-label={t("sf.groupSessions", { name: label })}>
@@ -1409,7 +1429,7 @@ export function NativeSessionHome({
                         <button type="button" className="tdw-button secondary" onClick={() => void loadOlderSessions(machine.id)} disabled={loading || loadingOlder}>{t("sf.retry")}</button>
                       </div>
                     ) : null}
-                    {loaded && hasOlderSessions ? (
+                    {olderKnownForMachine ? (
                       <div className="hr-native-home-pagination">
                         <button type="button" className="tdw-button secondary" onClick={() => void loadOlderSessions(machine.id)} disabled={loading || loadingOlder} aria-busy={loadingOlder}>
                           {loadingOlder ? <LoadingIcon size={14} /> : null}

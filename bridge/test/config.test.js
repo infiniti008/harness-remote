@@ -17,8 +17,18 @@ test("defaults to a loopback-only unauthenticated listener", () => {
     corsOrigins: [],
     logRequests: false,
     verbose: false,
+    promptIdleTimeoutMs: 1_800_000,
     stateDirectory: path.join(homedir(), ".harness-remote")
   })
+})
+
+test("long prompt silence has a finite, configurable budget independent of turn duration", () => {
+  assert.equal(parseConfig([], {}).promptIdleTimeoutMs, 30 * 60_000)
+  assert.equal(parseConfig([], { HARNESS_REMOTE_PROMPT_IDLE_TIMEOUT_MS: "2400000" }).promptIdleTimeoutMs, 2_400_000)
+  assert.equal(parseConfig(["--prompt-idle-timeout", "1200000"], {}).promptIdleTimeoutMs, 1_200_000)
+  for (const value of ["0", "-1", "999", "NaN", "Infinity", "2147483648"]) {
+    assert.throws(() => parseConfig([], { HARNESS_REMOTE_PROMPT_IDLE_TIMEOUT_MS: value }), /prompt-idle-timeout/)
+  }
 })
 
 test("configures a non-OMP ACP adapter command and arguments", () => {
@@ -49,13 +59,17 @@ test("selects PI defaults for the ACP backend", () => {
 
 test("selects Codex defaults for the ACP backend", () => {
   const expectedArgs = ["--yes", "--package=@agentclientprotocol/codex-acp@1.13.1", "codex-acp"]
-  assert.deepEqual(parseConfig(["--backend", "codex"], {}).backend, "codex")
-  assert.equal(parseConfig(["--backend", "codex"], {}).acpCommand, process.platform === "win32" ? "npx.cmd" : "npx")
+  // Keep fallback defaults independent of adapters installed in the developer's npm cache.
+  const parse = (args, environment) => parseConfig(args, environment, {
+    resolveLaunch: (profile) => ({ command: profile.command, args: profile.args })
+  })
+  assert.deepEqual(parse(["--backend", "codex"], {}).backend, "codex")
+  assert.equal(parse(["--backend", "codex"], {}).acpCommand, process.platform === "win32" ? "npx.cmd" : "npx")
   // The adapter embeds @openai/codex, so no separate Codex installation is required; the
   // version is pinned for the same `notarget` reason PI and Claude document.
-  assert.deepEqual(parseConfig(["--backend", "codex"], {}).acpArgs, expectedArgs)
-  assert.deepEqual(parseConfig([], { OMP_BRIDGE_BACKEND: "codex" }).acpArgs, expectedArgs)
-  assert.match(parseConfig(["--backend", "codex"], {}).acpArgs[1], /@\d+\.\d+\.\d+$/, "the adapter version must stay pinned")
+  assert.deepEqual(parse(["--backend", "codex"], {}).acpArgs, expectedArgs)
+  assert.deepEqual(parse([], { OMP_BRIDGE_BACKEND: "codex" }).acpArgs, expectedArgs)
+  assert.match(parse(["--backend", "codex"], {}).acpArgs[1], /@\d+\.\d+\.\d+$/, "the adapter version must stay pinned")
 })
 
 test("selects OpenCode 2 package fallback and MiMo native ACP defaults", () => {

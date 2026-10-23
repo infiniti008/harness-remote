@@ -187,6 +187,7 @@ export function createBridgeServer({ config, acp, serviceOptions, machineRegistr
   const serviceAcp = new AcpPromptEchoFilter(acp)
   const service = new AcpService(serviceAcp, {
     ...serviceOptions,
+    promptIdleTimeoutMs: config.promptIdleTimeoutMs ?? serviceOptions?.promptIdleTimeoutMs,
     requireExistingDirectory: profile.requireExistingDirectory,
     actionProviders: profile.actionProviders,
     preferListedTitles: profile.preferListedTitles,

@@ -3,6 +3,9 @@ import { readFileSync } from "node:fs"
 import test from "node:test"
 import {
   claimMachinePairing,
+  machinePairingLinkForEndpoint,
+  pairingGrantForConnection,
+  phonePairingEndpoint,
   parseMachinePairingActivation,
   parseMachinePairingGrant,
   parseMachinePairingGrantStatus,
@@ -24,6 +27,62 @@ function grantBody(overrides = {}) {
     ...overrides
   }
 }
+
+test("Docker pairing prefers the working published endpoint over container interfaces", () => {
+  const expiresAt = future()
+  const grant = parseMachinePairingGrant(grantBody({ expiresAt, links: [
+    { endpoint: "http://192.168.65.3:4097", uri: pairingURL("http://192.168.65.3:4097", expiresAt) },
+    { endpoint: "http://192.168.65.6:4097", uri: pairingURL("http://192.168.65.6:4097", expiresAt) }
+  ] }))
+  const config = { backend: "opencode", host: "192.168.1.42", port: 4907, username: "harness", password: "secret" }
+  const adjusted = pairingGrantForConnection(grant, config)
+  assert.deepEqual(adjusted.links.map((link) => link.endpoint), [
+    "http://192.168.1.42:4907", "http://192.168.65.3:4097", "http://192.168.65.6:4097"
+  ])
+  assert.deepEqual(parseMachinePairingActivation(adjusted.links[0].uri), {
+    endpoint: "http://192.168.1.42:4907", token: "a".repeat(43), expiresAt
+  })
+  assert.equal(parseMachinePairingGrant({ version: 1, ...adjusted })?.links[0].endpoint, adjusted.links[0].endpoint)
+  assert.doesNotMatch(adjusted.links[0].uri, /username|password|secret/)
+  assert.equal(grant.links[0].endpoint, "http://192.168.65.3:4097", "the daemon answer must remain unchanged")
+  assert.equal(pairingGrantForConnection(adjusted, config).links.length, 3, "do not duplicate the connected address")
+})
+
+test("phone pairing rejects local-only addresses and unsafe endpoint shapes", () => {
+  for (const endpoint of [
+    "http://localhost:4097", "http://LOCALHOST.:4097", "http://dev.localhost:4097",
+    "http://127.0.0.1:4097", "http://127.1:4097", "http://0.0.0.0:4097",
+    "http://[::1]:4097", "http://[::]:4097", "http://[::ffff:127.0.0.1]:4097",
+    "http://user:secret@machine.local:4097", "http://machine.local:4097/path",
+    "http://machine.local:4097?query=1", "http://machine.local:4097#fragment", "file:///tmp/foo", "http:"
+  ]) assert.equal(phonePairingEndpoint(endpoint), null, endpoint)
+  assert.equal(phonePairingEndpoint(" https://MacBook.local:4901/ "), "https://macbook.local:4901")
+  assert.equal(phonePairingEndpoint("http://[fd00::1]:4097"), "http://[fd00::1]:4097")
+})
+
+test("loopback connections keep network suggestions, and a loopback-only bind stays blocked", () => {
+  const grant = parseMachinePairingGrant(grantBody())
+  const config = { backend: "opencode", host: "127.0.0.1", port: 4097, username: "harness", password: "secret" }
+  assert.deepEqual(pairingGrantForConnection(grant, config).links, grant.links)
+  assert.equal(config.host, "127.0.0.1", "generating a QR must not rewrite the saved machine")
+  const local = { ...grant, loopbackOnly: true, links: [] }
+  assert.deepEqual(pairingGrantForConnection(local, { ...config, host: "192.168.1.42" }), local)
+  assert.equal(machinePairingLinkForEndpoint(local, "http://192.168.1.42:4097"), null)
+})
+
+test("manual pairing addresses use the fresh daemon token after regeneration", () => {
+  const grant = parseMachinePairingGrant(grantBody())
+  const endpoint = "https://gateway.example:8443"
+  const first = machinePairingLinkForEndpoint(grant, endpoint)
+  const nextURI = new URL(grant.links[0].uri)
+  nextURI.searchParams.set("token", "b".repeat(43))
+  const fresh = { ...grant, links: [{ ...grant.links[0], uri: nextURI.toString() }] }
+  const next = machinePairingLinkForEndpoint(fresh, endpoint)
+  assert.equal(parseMachinePairingActivation(first.uri).token, "a".repeat(43))
+  assert.equal(parseMachinePairingActivation(next.uri).token, "b".repeat(43))
+  assert.equal(parseMachinePairingActivation(next.uri).endpoint, endpoint)
+  assert.equal(machinePairingLinkForEndpoint(grant, "http://127.0.0.1:4097"), null)
+})
 
 test("pairing activation accepts only the private explicit daemon endpoint shape", () => {
   const expiresAt = future()

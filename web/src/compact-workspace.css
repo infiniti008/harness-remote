@@ -1,0 +1,227 @@
+/* Compact Session workspace. Global navigation occupies the rail, leaving the chat one header. */
+.hr-native-workspace .hr-topbar {
+  position: absolute;
+  inset: 0 auto auto 0;
+  z-index: 35;
+  display: flex;
+  justify-content: space-between;
+  width: var(--hrsf-rail-width);
+  min-height: 52px;
+  height: 52px;
+  padding: 8px 12px;
+  gap: 8px;
+  border-bottom: 1px solid var(--td3-border-soft);
+  background: var(--td3-panel);
+}
+.hr-native-workspace .hr-brand small { display: none; }
+.hr-native-workspace .hr-native-workspace-list { padding-top: 52px; }
+.hr-native-workspace .hr-native-workspace-session-header {
+  min-height: 52px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 8px;
+  padding: 6px 18px;
+}
+.hr-native-workspace .hr-native-session-heading { display: block; min-width: 0; }
+.hr-native-workspace .hr-native-session-title { margin: 0; min-height: 36px; font-size: 15px; }
+.hr-native-workspace .hr-native-session-title-button { min-height: 36px; }
+.hr-native-workspace .hr-native-workspace-session-actions { display: flex; align-items: center; flex: none; width: auto; gap: 4px; }
+.hr-compact-menu { position: relative; flex: none; }
+.hr-compact-menu > button > span { font-size: 24px; line-height: 1; }
+.hr-compact-menu-panel {
+  position: absolute;
+  z-index: 200;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(300px, calc(100vw - 24px));
+  max-height: min(560px, 75dvh);
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--td3-border);
+  border-radius: 14px;
+  color: var(--td3-text);
+  background: var(--td3-panel-2);
+  box-shadow: var(--td3-shadow-panel);
+}
+.hr-native-workspace .hr-topbar .tdw-top-actions { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
+.hr-native-workspace .hr-topbar .tdw-top-actions > button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  text-align: left;
+  background: transparent;
+}
+.hr-native-workspace .hr-topbar .tdw-top-actions > button:hover { background: var(--td3-raise-2); }
+.hr-native-workspace .hr-topbar .tdw-context-path {
+  display: flex;
+  flex-wrap: wrap;
+  padding: 8px;
+  margin-bottom: 6px;
+  max-width: 100%;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.hr-native-workspace .hr-topbar .tdw-machine-health { padding: 5px 10px; font-size: 11px; }
+.hr-native-workspace .hr-topbar .tdw-icon-button::after { content: attr(aria-label); font-size: 12px; margin-inline-start: 8px; }
+.hr-native-workspace .hr-topbar .hr-compact-menu > .tdw-icon-button::after { content: none; }
+.hr-native-workspace .hr-session-info { display: grid; gap: 9px; padding: 6px; font-size: 12px; }
+.hr-native-workspace .hr-session-info small { display: block; }
+.hr-native-workspace .hr-session-info code { display: block; overflow-wrap: anywhere; white-space: normal; font-size: 10px; }
+.hr-native-workspace .hr-session-info .hr-native-session-stats { display: flex; flex-wrap: wrap; max-width: 100%; }
+.hr-native-workspace.session-focus-mode .hr-native-workspace-session-header { display: flex; }
+.hr-native-workspace.session-focus-mode .uw-composer-meta,
+.hr-native-workspace.session-focus-mode .uw-composer-routing { display: none; }
+
+/* A single growing input, with controls sharing its surface and status above its border. */
+.tdw-work-thread-conversation .uw-composer-meta {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  width: min(1040px, calc(100% - 32px));
+  margin: 0 auto 5px;
+  color: var(--td3-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.uw-composer-context { display: flex; align-items: center; flex: 1; min-width: 0; gap: 8px; }
+.uw-composer-meta small { font-size: 11px; }
+.uw-composer-meta .uw-composer-directory { display: none; }
+.tdw-work-thread-conversation .uw-composer-meta .tdw-conversation-state {
+  min-height: 22px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font-size: 11px;
+}
+.hr-native-session-observer .uw-composer-meta {
+  width: min(var(--hrsf-content-max), calc(100% - 2 * var(--hrsf-gutter)));
+  margin-inline: calc(var(--hrsf-gutter) + max(0px, (100% - 2 * var(--hrsf-gutter) - var(--hrsf-content-max)) / 2 - var(--hrsf-optical-shift))) auto;
+}
+.tdw-work-thread-conversation .uw-composer-shell {
+  position: relative;
+  overflow: visible;
+  border-radius: 22px;
+}
+.uw-composer-input-row { display: flex; align-items: flex-end; gap: 5px; padding: 6px; }
+.tdw-work-thread-conversation .uw-composer-shell .uw-composer-input-row textarea {
+  order: 2;
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+  min-height: 24px;
+  max-height: 180px;
+  padding: 8px 4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  resize: none;
+  overflow-y: auto;
+  line-height: 24px;
+  font-size: 15px;
+}
+.tdw-work-thread-conversation .uw-composer-input-row .uw-composer-footer,
+.tdw-work-thread-conversation .uw-composer-inline-controls { display: contents; }
+.tdw-work-thread-conversation .uw-composer-input-row .uw-button {
+  position: static;
+  order: 4;
+  display: inline-flex;
+  flex: 0 0 36px;
+  justify-content: center;
+  align-items: center;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  margin: 0 0 2px;
+  border: 0;
+  border-radius: 50%;
+  font-size: 20px;
+}
+.tdw-work-thread-conversation .uw-composer-input-row .uw-composer-attach { order: 1; background: transparent; }
+.tdw-work-thread-conversation .uw-composer-input-row .uw-button-label { display: none; }
+.tdw-work-thread-conversation .uw-composer-input-row .uw-button::after { content: none; }
+.uw-composer-input-row .uw-composer-routing {
+  order: 3;
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 2px;
+  min-width: 0;
+}
+.uw-composer-input-row .uw-composer-routing label { display: flex; min-width: 0; }
+.uw-composer-input-row .uw-composer-routing label > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.uw-composer-input-row .uw-composer-routing .tdw-single-agent-control { display: none; }
+.uw-composer-input-row .uw-composer-routing select { width: auto; max-width: 110px; min-height: 36px; padding: 4px 22px 4px 8px; border: 0; background-color: transparent; font-size: 12px; }
+.uw-composer-input-row .uw-composer-model { flex: none; }
+.uw-composer-input-row .tdw-model-picker.compact { position: static; width: clamp(120px, 16vw, 210px); }
+.uw-composer-input-row .tdw-model-trigger { min-height: 36px; padding: 4px 7px; border: 0; border-radius: 12px; background: transparent; }
+.uw-composer-input-row .tdw-model-trigger-copy { flex-direction: row; align-items: baseline; gap: 5px; }
+.uw-composer-input-row .tdw-model-trigger-copy strong { font-size: 12px; }
+.uw-composer-input-row .tdw-model-trigger-copy small { font-size: 10px; }
+.uw-composer-input-row .tdw-model-popover { top: auto; right: 0; bottom: calc(100% + 8px); max-height: min(560px, 64dvh); }
+.uw-composer-input-row .tdw-field-note { position: absolute; bottom: calc(100% + 6px); right: 0; max-width: 100%; padding: 4px 8px; background: var(--td3-panel); border-radius: 6px; font-size: 11px; }
+.uw-composer-meta .hr-native-outcome.compact { position: static; max-width: 35%; margin: 0; }
+.uw-composer-meta .hr-native-outcome.compact .hr-native-outcome-body { top: auto; bottom: calc(100% + 8px); right: 0; width: min(560px, 100%); }
+.uw-composer-meta .hr-native-outcome.compact .hr-native-outcome-toggle { min-height: 22px; padding: 0 7px; }
+
+@media (max-width: 780px), (pointer: coarse) and (min-width: 600px) and (max-height: 640px) {
+  .hr-native-workspace .hr-topbar { width: 100%; }
+  .hr-native-workspace .hr-native-workspace-session-header { padding: max(6px, env(safe-area-inset-top)) 8px 6px 47px; min-height: 50px; }
+  .hr-native-workspace .hr-native-session-heading > .hr-native-session-title { min-height: 36px; display: flex; align-items: center; font-size: 15px; }
+  .hr-native-workspace .hr-native-session-title:not(.editing) .hr-native-session-title-button { min-height: 36px; }
+  .hr-native-workspace .hr-native-workspace-session-actions { align-self: center; min-height: 36px; }
+  .hr-native-workspace .hr-session-info .hr-native-session-eyebrow { display: flex; }
+  .hr-native-workspace .uw-composer-routing .tdw-model-picker.compact { width: auto !important; min-width: 0 !important; max-width: 62vw !important; }
+  .hr-native-workspace .uw-composer-input-row .tdw-model-popover {
+    position: absolute !important;
+    inset: auto 0 calc(100% + 8px) !important;
+    width: 100% !important;
+    max-height: min(480px, 58dvh) !important;
+  }
+  .hr-native-session-observer .uw-composer-meta { width: calc(100% - 16px); margin: 0 8px 4px; }
+  .uw-composer-meta .uw-composer-context { overflow: hidden; }
+  .uw-composer-meta small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+  /* These two declarations replace legacy phone rules that use !important to reserve a footer. */
+  .hr-native-workspace .tdw-work-thread-conversation .uw-composer-input-row textarea { min-height: 24px !important; padding: 8px 4px !important; font-size: 16px; }
+  .hr-native-workspace .tdw-work-thread-conversation .uw-composer-input-row .uw-button { position: static !important; width: 36px !important; min-width: 36px !important; height: 36px !important; min-height: 36px !important; padding: 0 !important; }
+}
+@media (max-width: 620px) {
+  /* Keep the full line for typing on a phone. Model selection shares the small status line. */
+  .uw-composer-input-row .uw-composer-routing {
+    position: absolute;
+    inset: auto 0 calc(100% + 4px);
+    width: 100%;
+    height: 22px;
+    justify-content: flex-end;
+    margin: 0;
+    pointer-events: none;
+  }
+  .uw-composer-routing > label, .uw-composer-routing .tdw-model-popover { pointer-events: auto; }
+  .uw-composer-input-row .tdw-model-picker.compact { width: auto; max-width: 130px; }
+  .uw-composer-input-row .tdw-model-trigger { min-height: 22px; padding: 1px 4px; }
+  .uw-composer-input-row .tdw-model-trigger-copy strong { font-size: 11px; }
+  .uw-composer-input-row .tdw-model-trigger-copy small { display: none; }
+  .uw-composer-input-row .uw-composer-routing select { min-height: 22px; max-width: 86px; padding-block: 1px; font-size: 11px; }
+  .tdw-work-thread-conversation .uw-composer-meta { padding-right: 144px; }
+  .uw-composer-meta .tdw-conversation-state { max-width: 65px; overflow: hidden; white-space: nowrap; }
+  .uw-conversation-core:has(.uw-composer-routing > label:not(.tdw-single-agent-control) select) .uw-composer-meta { padding-right: 235px; }
+  .uw-conversation-core:has(.uw-composer-routing > label:not(.tdw-single-agent-control) select) .hr-native-outcome.compact { min-width: 22px; max-width: 22px; width: 22px; border: 0; }
+  .uw-conversation-core:has(.uw-composer-routing > label:not(.tdw-single-agent-control) select) .hr-native-outcome-toggle { width: 22px; padding: 0; justify-content: center; }
+  .uw-conversation-core:has(.uw-composer-routing > label:not(.tdw-single-agent-control) select) .hr-native-outcome-toggle::after { display: none; }
+  .uw-conversation-core:has(.uw-composer-routing > label:not(.tdw-single-agent-control) select) .hr-native-outcome-summary { font-size: 0; }
+  .uw-conversation-core:has(.uw-composer-routing > label:not(.tdw-single-agent-control) select) .hr-native-outcome-summary::before { content: "≡"; font-size: 16px; }
+  .uw-conversation-core:has(.uw-composer-routing > label:not(.tdw-single-agent-control) select) .tdw-conversation-state > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+
+}

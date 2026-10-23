@@ -128,3 +128,12 @@ resume, early Stop and automatic escalation blockers addressed here. That extern
 local.2 acceptance result. Repeat the focused cases described in `docs/LOCAL_2_RETEST.md` before
 promoting this candidate. Home Assistant deployment remains blocked on that acceptance and an
 explicit installation/rollback rehearsal.
+
+## Compact workspace candidate 3.5.0-local.3
+
+The `ui/compact-session-layout` branch adds a compact Session header, sidebar navigation disclosure
+and a growing single-line composer with internal action buttons. Desktop model controls share the
+input surface; narrow phones place them on the existing small status line. See
+`docs/COMPACT_WORKSPACE.md` for synthetic screenshots, measured dimensions and the isolated lab
+checklist. This candidate includes local.2's backend fixes; the outstanding native/sandbox acceptance
+gates still apply. Updating the working deployment is a separate step.

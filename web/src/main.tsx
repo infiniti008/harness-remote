@@ -44,8 +44,9 @@ import "./beautiful-ui-controls.css"
 // A turn's Activity section. It styles only its own `hr-act*` classes, so its place here is about
 // reading order rather than winning ties.
 import "./activity-timeline.css"
-// The narrow Session header refines phone rules from several sheets above, so it settles last.
+// Header geometry comes before the compact workspace, which finishes the live layout.
 import "./session-header-narrow.css"
+import "./compact-workspace.css"
 
 installAppPreferences()
 installCompletionAudioGuard()

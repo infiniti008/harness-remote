@@ -181,6 +181,8 @@ type Props = {
   /** A failed transcript read is not a valid empty conversation and must remain visible as such. */
   transcriptError?: string
   directory?: string
+  composerControls?: ReactNode
+  composerStatus?: ReactNode
   footerHint?: string
   renderMessage?: (message: MessageEnvelope) => ReactNode
   /** Prompts accepted behind the running turn, rendered as the queued strip above the composer. */
@@ -657,6 +659,8 @@ export function TaskDeskConversation({
   transcriptError,
   directory,
   footerHint,
+  composerControls,
+  composerStatus,
   queuedPrompts = [],
   onCancelQueuedPrompt,
   canSendWhileWaiting = false,
@@ -699,7 +703,7 @@ export function TaskDeskConversation({
       const composer = composerRef.current
       if (!composer) return
       composer.style.height = "auto"
-      composer.style.height = `${Math.min(COMPOSER_MAX_HEIGHT_PX, Math.max(66, composer.scrollHeight))}px`
+      composer.style.height = `${Math.min(COMPOSER_MAX_HEIGHT_PX, Math.max(24, composer.scrollHeight))}px`
     })
     return () => {
       if (composerFrameRef.current !== undefined) {
@@ -781,6 +785,13 @@ export function TaskDeskConversation({
         scrollScope={scrollScope}
       />
 
+      <div className="uw-composer-meta">
+        <div className="uw-composer-context">
+          {directory ? <span className="uw-composer-directory" title={directory}>{directory}</span> : null}
+          {composerBusy ? null : <small id="uw-composer-hint">{hint}</small>}
+        </div>
+        {composerStatus}
+      </div>
       <div className={`uw-composer-shell${composerBusy ? " busy" : ""}`} aria-busy={composerBusy || undefined}>
         {queuedPrompts.length ? (
           <div className="uw-queued-prompts" aria-label="Prompts waiting behind the running turn">
@@ -853,93 +864,93 @@ export function TaskDeskConversation({
             <span>{composerBusyLabel}</span>
           </div>
         ) : null}
-        <textarea
-          ref={composerRef}
-          value={draft}
-          onChange={(event) => onDraftChange(event.target.value)}
-          onKeyDown={onComposerKeyDown}
-          onPaste={(event) => {
-            // A pasted image is attached like a picker pick, never pasted as raw bytes into the body.
-            if (!attachmentsSupported) return
-            const pasted = imageFilesFromClipboard(event.clipboardData)
-            if (!pasted.length) return
-            event.preventDefault()
-            void attachImageFiles(pasted)
-          }}
-          placeholder={waiting ? `${agentLabel} is working…` : placeholder || `Continue with ${agentLabel}…`}
-          rows={3}
-          enterKeyHint={touchFirst ? "enter" : "send"}
-          disabled={!ready || composerDisabled}
-          aria-disabled={!ready || composerDisabled || undefined}
-          aria-label={`Message ${agentLabel}`}
-          aria-describedby={composerBusy ? "uw-composer-busy" : "uw-composer-hint"}
-        />
-        <div className="uw-composer-footer">
-          <span className="uw-composer-directory">{directory || ""}</span>
-          <div>
-            {attachmentsSupported ? (
-              <>
-                <input
-                  ref={attachmentInputRef}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  hidden
-                  onChange={(event) => {
-                    attachImageFiles(Array.from(event.target.files ?? []))
-                    event.target.value = ""
-                  }}
-                />
+        <div className="uw-composer-input-row">
+          <textarea
+            ref={composerRef}
+            value={draft}
+            onChange={(event) => onDraftChange(event.target.value)}
+            onKeyDown={onComposerKeyDown}
+            onPaste={(event) => {
+              // A pasted image is attached like a picker pick, never pasted as raw bytes into the body.
+              if (!attachmentsSupported) return
+              const pasted = imageFilesFromClipboard(event.clipboardData)
+              if (!pasted.length) return
+              event.preventDefault()
+              void attachImageFiles(pasted)
+            }}
+            placeholder={waiting ? `${agentLabel} is working…` : placeholder || `Continue with ${agentLabel}…`}
+            rows={1}
+            enterKeyHint={touchFirst ? "enter" : "send"}
+            disabled={!ready || composerDisabled}
+            aria-disabled={!ready || composerDisabled || undefined}
+            aria-label={`Message ${agentLabel}`}
+            aria-describedby={composerBusy ? "uw-composer-busy" : "uw-composer-hint"}
+          />
+          <div className="uw-composer-footer">
+            <div className="uw-composer-inline-controls">
+              {composerControls}
+              {attachmentsSupported ? (
+                <>
+                  <input
+                    ref={attachmentInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    hidden
+                    onChange={(event) => {
+                      attachImageFiles(Array.from(event.target.files ?? []))
+                      event.target.value = ""
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="uw-button uw-composer-attach"
+                    disabled={!ready || composerDisabled || sending || waiting || attachments.length >= ATTACHMENT_MAX_COUNT}
+                    onClick={() => attachmentInputRef.current?.click()}
+                    aria-label="Attach image"
+                    title="Attach image"
+                  >
+                    <PaperclipIcon size={15} />
+                  </button>
+                </>
+              ) : null}
+              {waiting && onStop && midTurnSend && draft.trim() ? (
+                // Stop alone left no way to deliver the message typed while the agent works - and no
+                // way at all on a phone, where Enter only adds a line.
                 <button
                   type="button"
-                  className="uw-button"
-                  disabled={!ready || composerDisabled || sending || waiting || attachments.length >= ATTACHMENT_MAX_COUNT}
-                  onClick={() => attachmentInputRef.current?.click()}
-                  aria-label="Attach image"
-                  title="Attach image"
+                  className="uw-button uw-button-primary"
+                  disabled={!canSend}
+                  onClick={() => void onSend()}
+                  aria-label="Send"
                 >
-                  <PaperclipIcon size={15} />
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg><span className="uw-button-label">Send</span>
                 </button>
-              </>
-            ) : null}
-            {/* While the composer is busy its status row above the field already says why. */}
-            {composerBusy ? null : <small id="uw-composer-hint">{hint}</small>}
-            {waiting && onStop && midTurnSend && draft.trim() ? (
-              // Stop alone left no way to deliver the message typed while the agent works - and no
-              // way at all on a phone, where Enter only adds a line.
-              <button
-                type="button"
-                className="uw-button uw-button-primary"
-                disabled={!canSend}
-                onClick={() => void onSend()}
-                aria-label="Send"
-              >
-                ↑<span className="uw-button-label">Send</span>
-              </button>
-            ) : null}
-            {waiting && onStop ? (
-              <button
-                type="button"
-                className="uw-button uw-button-danger"
-                disabled={stopping}
-                onClick={() => void onStop()}
-                aria-label={stopping ? "Stopping" : "Stop"}
-              >
-                {stopping ? <LoadingIcon size={15} /> : <StopCircleIcon size={15} />}
-                <span className="uw-button-label">{stopping ? "Stopping" : "Stop"}</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="uw-button uw-button-primary"
-                disabled={!canSend}
-                onClick={() => void onSend()}
-                aria-label={sending && !midTurnSend ? "Sending" : "Send"}
-              >
-                {sending && !midTurnSend ? <LoadingIcon size={15} /> : "↑"}
-                <span className="uw-button-label">{sending && !midTurnSend ? "Sending" : "Send"}</span>
-              </button>
-            )}
+              ) : null}
+              {waiting && onStop ? (
+                <button
+                  type="button"
+                  className="uw-button uw-button-danger"
+                  disabled={stopping}
+                  onClick={() => void onStop()}
+                  aria-label={stopping ? "Stopping" : "Stop"}
+                >
+                  {stopping ? <LoadingIcon size={15} /> : <StopCircleIcon size={15} />}
+                  <span className="uw-button-label">{stopping ? "Stopping" : "Stop"}</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="uw-button uw-button-primary"
+                  disabled={!canSend}
+                  onClick={() => void onSend()}
+                  aria-label={sending && !midTurnSend ? "Sending" : "Send"}
+                >
+                  {sending && !midTurnSend ? <LoadingIcon size={15} /> : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg>}
+                  <span className="uw-button-label">{sending && !midTurnSend ? "Sending" : "Send"}</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>

@@ -489,7 +489,7 @@ try {
   await waitFor(() => typeof releaseBlockedModelRead === "function", "blocked PI model catalog request")
   assert.equal(await blockedComposer.isDisabled(), true, "composer must stay disabled while native models are still loading")
   assert.equal(await page.getByRole("button", { name: /^Send$/ }).isDisabled(), true, "Send must stay disabled while native models are still loading")
-  assert.equal(await page.locator(".tdw-agent-control select").first().isDisabled(), true, "harness selector must stay disabled while native models are still loading")
+  assert.equal(await page.locator(".uw-composer-routing select").first().isDisabled(), true, "harness selector must stay disabled while native models are still loading")
   assert.match(await page.locator(".tdw-conversation-state").innerText(), /Loading models|Waiting for model catalog/, "Session must expose model bootstrap instead of Ready")
   releaseBlockedModelRead?.()
   await assertCatalog(page, ["pi-coding", "pi-reasoning"], ["omp-fast", "omp-deep"], "A")
@@ -570,7 +570,7 @@ try {
   await backToSessions(page)
   await openSession(page, TITLE_A, markers.get(SESSION_A))
 
-  const routedControls = page.locator(".tdw-agent-control.routed")
+  const routedControls = page.locator(".uw-composer-routing.routed")
   await routedControls.waitFor({ state: "visible", timeout: 15_000 })
   assert.equal(await routedControls.getByText("Machine", { exact: true }).count(), 0, "Session handoff must not expose a machine selector")
   assert.equal(await routedControls.getByText("Harness", { exact: true }).count(), 1, "Session handoff must expose one harness selector")
@@ -583,7 +583,7 @@ try {
   // 220px. Lock the visible control-to-control gap, not just a CSS token, so cascade regressions fail.
   // On a wide pane each label sits inline before its control, so the Model group starts at its label.
   const routingHarnessBox = await routedControls.locator("label").filter({ hasText: /^Harness/ }).locator("select").boundingBox()
-  const routingModelBox = await routedControls.locator("label.tdw-model-control").boundingBox()
+  const routingModelBox = await routedControls.locator("label.uw-composer-model").boundingBox()
   const routingGroupBox = await routedControls.boundingBox()
   assert.ok(routingHarnessBox && routingModelBox && routingGroupBox, "routing controls must have measurable desktop geometry")
   const harnessToModelGap = routingModelBox.x - (routingHarnessBox.x + routingHarnessBox.width)
@@ -679,7 +679,7 @@ try {
   // --- target created, first target prompt refused: retry must reuse that exact target --------------
   await backToSessions(page)
   await openSession(page, TITLE_B, markers.get(SESSION_B))
-  const retryControls = page.locator(".tdw-agent-control.routed")
+  const retryControls = page.locator(".uw-composer-routing.routed")
   const retryHarness = retryControls.locator("label").filter({ hasText: /^Harness/ }).locator("select")
   await retryHarness.selectOption("omp")
   await assertCatalog(page, ["omp-fast", "omp-deep"], ["pi-coding", "pi-reasoning"], "B routed to OMP")

@@ -57,6 +57,7 @@ import { useDialogDismiss } from "../useDialogDismiss"
 import { useTranslator } from "../useTranslator"
 import { CommandPalette, type PaletteCommand } from "./shell"
 import { MachinePairingDialog } from "./machine-pairing-dialog"
+import { CompactMenu } from "./compact-menu"
 import { NativeSessionActions } from "./native-session-actions"
 import { NativeSessionHome } from "./native-session-home"
 import { NativeSessionTitle } from "./native-session-rename"
@@ -1207,35 +1208,37 @@ function NativeSessionsWorkspace({
     <section className={`tdw-shell hr-control-plane hr-native-workspace${sessionFocusMode ? " session-focus-mode" : ""}`} aria-label={t("nav.sessions")}>
       <header className="tdw-topbar hr-topbar">
         <div className="tdw-brand hr-brand"><img className="tdw-logo hr-logo hr-app-icon" src={`${import.meta.env.BASE_URL}icon-192.png`} alt="" width={32} height={32} /><div><strong>Harness Remote</strong><small>{t("sf.brandTagline")}</small></div></div>
-        <div className="tdw-context-path" aria-label={t("sf.workspaceContext")}>
-          <span>{selectedMachine?.name || t("sf.allMachines")}</span><b>/</b>
-          <strong>{selectedProject || t("sf.nativeSessions")}</strong>
-          {selected ? <><b>/</b><em>{selected.title}</em></> : null}
-        </div>
-        <div className="tdw-top-actions">
-          <span className="tdw-machine-health" aria-label={t("sf.machineCount", { online: onlineCount, total: machines.length })}>
-            <i className={startupPhase === "ready" ? onlineCount > 0 ? "online" : "offline" : "pending"} aria-hidden="true" />
-            {t("sf.machineCount", { online: onlineCount, total: machines.length })}
-          </span>
-          <button type="button" className="tdw-button secondary tdw-machines-button" onClick={onManageMachines}><ServerIcon size={15} /> {t("sf.machines")}</button>
-          <button type="button" className="palette-hint" onClick={() => setPaletteOpen(true)} title={t("command.commandPalette")} aria-label={t("command.commandPalette")}><span>⌘K</span></button>
-          {selected ? (
-            <button
-              type="button"
-              className="tdw-icon-button hr-session-focus-toggle"
-              onClick={toggleSessionFocusMode}
-              title={sessionFocusMode ? t("sf.showSessionControls") : t("sf.hideSessionControls")}
-              aria-label={sessionFocusMode ? t("sf.showSessionControls") : t("sf.hideSessionControls")}
-              aria-pressed={sessionFocusMode}
-            >
-              <ChatIcon size={16} />
+        <CompactMenu label={t("sf.workspaceContext")} closeOnAction>
+          <div className="tdw-context-path" aria-label={t("sf.workspaceContext")}>
+            <span>{selectedMachine?.name || t("sf.allMachines")}</span><b>/</b>
+            <strong>{selectedProject || t("sf.nativeSessions")}</strong>
+            {selected ? <><b>/</b><em>{selected.title}</em></> : null}
+          </div>
+          <div className="tdw-top-actions">
+            <span className="tdw-machine-health" aria-label={t("sf.machineCount", { online: onlineCount, total: machines.length })}>
+              <i className={startupPhase === "ready" ? onlineCount > 0 ? "online" : "offline" : "pending"} aria-hidden="true" />
+              {t("sf.machineCount", { online: onlineCount, total: machines.length })}
+            </span>
+            <button type="button" className="tdw-button secondary tdw-machines-button" onClick={onManageMachines}><ServerIcon size={15} /> {t("sf.machines")}</button>
+            <button type="button" className="palette-hint" onClick={() => setPaletteOpen(true)} title={t("command.commandPalette")} aria-label={t("command.commandPalette")}><span>{t("command.commandPalette")}</span><kbd>⌘K</kbd></button>
+            {selected ? (
+              <button
+                type="button"
+                className="tdw-icon-button hr-session-focus-toggle"
+                onClick={toggleSessionFocusMode}
+                title={sessionFocusMode ? t("sf.showSessionControls") : t("sf.hideSessionControls")}
+                aria-label={sessionFocusMode ? t("sf.showSessionControls") : t("sf.hideSessionControls")}
+                aria-pressed={sessionFocusMode}
+              >
+                <ChatIcon size={16} />
+              </button>
+            ) : null}
+            <button type="button" className="tdw-icon-button" onClick={onManageSettings} title={t("nav.settings")} aria-label={t("nav.settings")}><SettingsIcon size={16} /></button>
+            <button type="button" className="tdw-icon-button hr-refresh-button" onClick={() => requestRefresh("toolbar")} title={toolbarRefreshing ? t("sf.refreshingMachines") : t("sf.refresh")} aria-label={toolbarRefreshing ? t("sf.refreshingMachines") : t("sf.refresh")} aria-busy={toolbarRefreshing || undefined} disabled={workspaceRefreshing}>
+              {toolbarRefreshing ? <LoadingIcon size={16} /> : <RefreshIcon size={16} />}
             </button>
-          ) : null}
-          <button type="button" className="tdw-icon-button" onClick={onManageSettings} title={t("nav.settings")} aria-label={t("nav.settings")}><SettingsIcon size={16} /></button>
-          <button type="button" className="tdw-icon-button hr-refresh-button" onClick={() => requestRefresh("toolbar")} title={toolbarRefreshing ? t("sf.refreshingMachines") : t("sf.refresh")} aria-label={toolbarRefreshing ? t("sf.refreshingMachines") : t("sf.refresh")} aria-busy={toolbarRefreshing || undefined} disabled={workspaceRefreshing}>
-            {toolbarRefreshing ? <LoadingIcon size={16} /> : <RefreshIcon size={16} />}
-          </button>
-        </div>
+          </div>
+        </CompactMenu>
       </header>
       <div
         className="hr-native-workspace-body"
@@ -1290,39 +1293,46 @@ function NativeSessionsWorkspace({
                   className="hr-native-session-heading"
                   title={[selected.external ? t("sf.startedInHarness") : t("sf.createdInHarnessRemote"), selected.directory].filter(Boolean).join(" · ")}
                 >
-                  <div className="hr-native-session-eyebrow">
-                    <span>{selected.agentLabel}</span>
-                    {selected.nativeAgent ? <><i aria-hidden="true">/</i><span>{selected.nativeAgent}</span></> : null}
-                  </div>
                   <NativeSessionTitle target={selected} onRenamed={handleSessionRenamed} />
-                  <small>{selected.external ? t("sf.startedInHarness") : t("sf.createdInHarnessRemote")}</small>
-                  {/* Its own element so a narrow header can give the path a full line, clipped at the
-                      start: the end of a path is the part that tells two projects apart. */}
-                  {selected.directory ? <small className="hr-native-session-directory hr-path-tail" title={selected.directory}><bdi>{selected.directory}</bdi></small> : null}
                 </div>
                 <div className="hr-native-workspace-session-actions">
-                  {selected.nativeAgent || selectedPolicyLabel || selectedTokenCount || selectedHasChanges || Number(selected.cost) > 0 ? (
-                    <div className="hr-native-session-stats" aria-label={t("sf.sessionStatistics")}>
-                      {selected.nativeAgent ? <span title={t("sf.nativeAgentMode")}>{t("sf.agentLabel", { name: selected.nativeAgent })}</span> : null}
-                      {selectedPolicyLabel ? <span title={t("sf.policySummary")}>{selectedPolicyLabel}</span> : null}
-                      {selectedTokenCount ? <span title={t("sf.cumulativeTokens")}>{t("sf.tokensLabel", { count: compactNumber(selectedTokenCount) })}</span> : null}
-                      {selectedHasChanges ? (
-                        <span title={t("sf.changedFiles", { count: selected.summary?.files || 0 })}>
-                          <b>+{selected.summary?.additions || 0}</b>
-                          <i>−{selected.summary?.deletions || 0}</i>
-                          <em>{t("sf.filesLabel", { count: selected.summary?.files || 0 })}</em>
-                        </span>
+                  {sessionFocusMode ? <button type="button" className="tdw-icon-button" onClick={toggleSessionFocusMode} title={t("sf.showSessionControls")} aria-label={t("sf.showSessionControls")}><ChatIcon size={16} /></button> : null}
+                  <CompactMenu label={t("sf.sessionStatistics")}>
+                    <div className="hr-session-info">
+                      <div className="hr-native-session-eyebrow">
+                        <span>{selected.agentLabel}</span>
+                        {selected.nativeAgent ? <><i aria-hidden="true">/</i><span>{selected.nativeAgent}</span></> : null}
+                      </div>
+
+                      <small>{selected.external ? t("sf.startedInHarness") : t("sf.createdInHarnessRemote")}</small>
+                      {/* Its own element so a narrow header can give the path a full line, clipped at the
+                          start: the end of a path is the part that tells two projects apart. */}
+                      {selected.directory ? <small className="hr-native-session-directory hr-path-tail" title={selected.directory}><bdi>{selected.directory}</bdi></small> : null}
+                        <span>{selectedMachine?.name}</span>
+                      {selected.nativeAgent || selectedPolicyLabel || selectedTokenCount || selectedHasChanges || Number(selected.cost) > 0 ? (
+                        <div className="hr-native-session-stats" aria-label={t("sf.sessionStatistics")}>
+                          {selected.nativeAgent ? <span title={t("sf.nativeAgentMode")}>{t("sf.agentLabel", { name: selected.nativeAgent })}</span> : null}
+                          {selectedPolicyLabel ? <span title={t("sf.policySummary")}>{selectedPolicyLabel}</span> : null}
+                          {selectedTokenCount ? <span title={t("sf.cumulativeTokens")}>{t("sf.tokensLabel", { count: compactNumber(selectedTokenCount) })}</span> : null}
+                          {selectedHasChanges ? (
+                            <span title={t("sf.changedFiles", { count: selected.summary?.files || 0 })}>
+                              <b>+{selected.summary?.additions || 0}</b>
+                              <i>−{selected.summary?.deletions || 0}</i>
+                              <em>{t("sf.filesLabel", { count: selected.summary?.files || 0 })}</em>
+                            </span>
+                          ) : null}
+                          {Number(selected.cost) > 0 ? <span title={t("sf.reportedCost")}>${Number(selected.cost).toFixed(2)}</span> : null}
+                        </div>
                       ) : null}
-                      {Number(selected.cost) > 0 ? <span title={t("sf.reportedCost")}>${Number(selected.cost).toFixed(2)}</span> : null}
+                    <code title={selected.sessionID}>{selected.sessionID}</code>
                     </div>
-                  ) : null}
+                  </CompactMenu>
                   <NativeSessionActions
                     target={selected}
                     onDeleteStarted={handleSessionDeleteStarted}
                     onDeleteFailed={handleSessionDeleteFailed}
                     onDeleted={handleSessionDeleted}
                   />
-                  <code title={selected.sessionID}>{selected.sessionID}</code>
                 </div>
               </header>
               {selectedLinks.length || selectedTransferredContext || lineageError ? (

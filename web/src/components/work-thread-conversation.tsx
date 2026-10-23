@@ -309,7 +309,7 @@ export function ConversationStatePill({
     : working
       ? `${workingLabel}${elapsed >= 2 ? ` · ${elapsed}s` : ""}`
       : outcome?.text || "Ready"
-  return <span className={`tdw-conversation-state ${state}`} title={outcome && detail ? detail : undefined}><i aria-hidden="true" /><span>{text}</span></span>
+  return <span className={`tdw-conversation-state ${state}`} title={outcome && detail ? detail : text}><i aria-hidden="true" /><span>{text}</span></span>
 }
 
 const WorkThreadBubble = memo(function WorkThreadBubble({
@@ -1267,34 +1267,6 @@ ${current}` : text) : current)
 
   return (
     <div className="tdw-work-thread-conversation">
-      <div className="tdw-conversation-toolbar">
-        <div className={`tdw-agent-control${routing ? " routed" : ""}`}>
-          <label>
-            <span>{routing ? "Harness" : "Continue with"}</span>
-            <select value={targetAgentID} disabled={!interactionEnabled || working || replyPending || sending || modelBootstrapBlocked || destinationAgents.length === 0} onChange={(event) => {
-              modelGeneration.current += 1
-              modelSelectionTouchedRef.current = false
-              routeSelectionTouchedRef.current = event.target.value !== currentAgentID
-              setModels([])
-              setModelError(null)
-              setTargetModelKey("")
-              setTargetAgentID(event.target.value)
-            }}>
-              {destinationAgents.map((agent) => <option value={agent.id} key={agent.id}>{agent.label}</option>)}
-            </select>
-          </label>
-          <label className="tdw-model-control">
-            <span>Model</span>
-            <ModelPicker compact models={models} value={targetModelKey} currentModel={currentModelForPicker} onChange={(value) => {
-              modelSelectionTouchedRef.current = true
-              setTargetModelKey(value)
-            }} disabled={!interactionEnabled || working || replyPending || sending || modelsLoading || !targetAgentID} loading={modelsLoading} placeholder={modelBootstrapBlocked ? (modelError ? "Model unavailable" : t("composer.loadingModels")) : deferModelFallback ? "Harness default" : undefined} unavailableHint={modelError || undefined} />
-            {modelError ? <small className="tdw-field-note" title={modelError}>Model catalog unavailable. Sending is paused until a model can be verified.</small> : null}
-          </label>
-        </div>
-        {toolbarAccessory}
-        <ConversationStatePill working={working || replyPending || sending || replySettling || modelBootstrapBlocked} attention={hasAttention} workingLabel={conversationStateLabel} startedAt={sending || modelBootstrapBlocked ? undefined : conversation.currentTurn?.startedAt} status={conversation.status} detail={conversation.error?.message || undefined} />
-      </div>
 
       {routeChanged ? (
         <div className={`tdw-route-preview${sending ? " active" : ""}`} role="status" aria-live="polite">
@@ -1325,6 +1297,36 @@ ${current}` : text) : current)
       {error ? <div className="tdw-chat-error" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>×</button></div> : null}
 
       <TaskDeskConversation
+        composerControls={
+          <div className={`uw-composer-routing${routing ? " routed" : ""}`}>
+            <label className={destinationAgents.length < 2 ? "tdw-single-agent-control" : undefined}>
+              <span>{routing ? "Harness" : "Continue with"}</span>
+              <select value={targetAgentID} disabled={!interactionEnabled || working || replyPending || sending || modelBootstrapBlocked || destinationAgents.length === 0} onChange={(event) => {
+                modelGeneration.current += 1
+                modelSelectionTouchedRef.current = false
+                routeSelectionTouchedRef.current = event.target.value !== currentAgentID
+                setModels([])
+                setModelError(null)
+                setTargetModelKey("")
+                setTargetAgentID(event.target.value)
+              }}>
+                {destinationAgents.map((agent) => <option value={agent.id} key={agent.id}>{agent.label}</option>)}
+              </select>
+            </label>
+            <label className="uw-composer-model">
+              <span>Model</span>
+              <ModelPicker compact models={models} value={targetModelKey} currentModel={currentModelForPicker} onChange={(value) => {
+                modelSelectionTouchedRef.current = true
+                setTargetModelKey(value)
+              }} disabled={!interactionEnabled || working || replyPending || sending || modelsLoading || !targetAgentID} loading={modelsLoading} placeholder={modelBootstrapBlocked ? (modelError ? "Model unavailable" : t("composer.loadingModels")) : deferModelFallback ? "Harness default" : undefined} unavailableHint={modelError || undefined} />
+              {modelError ? <small className="tdw-field-note" title={modelError}>Model catalog unavailable. Sending is paused until a model can be verified.</small> : null}
+            </label>
+          </div>
+        }
+        composerStatus={<>
+          {toolbarAccessory}
+          <ConversationStatePill working={working || replyPending || sending || replySettling || modelBootstrapBlocked} attention={hasAttention} workingLabel={conversationStateLabel} startedAt={sending || modelBootstrapBlocked ? undefined : conversation.currentTurn?.startedAt} status={conversation.status} detail={conversation.error?.message || undefined} />
+        </>}
         scrollScope={scrollScope}
         messages={presentedTimeline}
         agentLabel={pendingAgentLabel}

@@ -131,9 +131,9 @@ test("a live turn keeps its tail halfway up the transcript, after a Send or on o
   assert.doesNotMatch(component, /sizeSendAnchor|pinnedRef/)
 })
 
-test("a wide Session pane shows the outcome as a toolbar chip, a phone keeps its own row", () => {
+test("Session outcomes share compact composer status on desktop and phone", () => {
   assert.match(controller, /toolbarAccessory\?: ReactNode/)
   assert.match(controller, /\{toolbarAccessory\}\s+<ConversationStatePill/)
-  assert.match(observer, /\{compactLayout \? outcomePanel : null\}/)
-  assert.match(observer, /toolbarAccessory=\{compactLayout \? undefined : outcomePanel\}/)
+  assert.match(controller, /composerStatus=\{<>/)
+  assert.match(observer, /toolbarAccessory=\{outcomePanel\}/)
 })

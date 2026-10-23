@@ -470,7 +470,7 @@ async function waitForReady(page) {
         className: node.className,
         text: node.textContent
       })),
-      model: [...document.querySelectorAll(".tdw-model-control")].map((node) => ({
+      model: [...document.querySelectorAll(".uw-composer-model")].map((node) => ({
         text: node.textContent,
         trigger: node.querySelector("button")?.textContent,
         disabled: node.querySelector("button")?.hasAttribute("disabled")

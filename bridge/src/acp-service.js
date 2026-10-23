@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promis
 import path from "node:path"
 import { selectableAcpModelValue, modelConfigOptionFromSessionResponse, modelValueIsExcluded, normalizedAcpModelCandidates, splitInlineAcpModelVariant } from "./agent-model-catalog.js"
 import { TranscriptCache } from "./transcript-cache.js"
-import { isHistoryReadError } from "./history-read-budget.js"
+import { HistoryReadError, isHistoryReadError } from "./history-read-budget.js"
 import { DEFAULT_PROMPT_IDLE_TIMEOUT_MS } from "./config.js"
 import { stripAmbientContext } from "./ambient-context.js"
 import {
@@ -533,6 +533,7 @@ export class AcpService {
       || (this.#dirtySnapshots.has(sessionID) && Date.now() - (this.#dirtyStart.get(sessionID) ?? 0) < 10_000)
       || Boolean(this.#queues.get(sessionID)?.length),
     onEvict: (sessionID) => {
+      this.#historyWindows.delete(sessionID)
       this.#loaded.delete(sessionID)
       this.#restoredSnapshots.delete(sessionID)
       this.#todos.delete(sessionID)
@@ -558,6 +559,7 @@ export class AcpService {
     }
   })
   #todos = new Map()
+  #historyWindows = new Map()
   #configOptions = new Map()
   #modelSwitchMethods = new Map()
   #commandCatalogs = new Map()
@@ -594,6 +596,8 @@ export class AcpService {
   #agentTurnSettleIdleMs
   #agentTurnGraceMs
   #promptGates = new Map()
+  #stopEpochs = new Map()
+  #stops = new Map()
   #midTurnPrompt
   #cancelledSessions = new Set()
   #promptedSessions = new Set()
@@ -744,6 +748,12 @@ export class AcpService {
       this.#loaded.delete(sessionID)
       this.#acpOpenSessions.delete(sessionID)
       this.#configOptions.delete(sessionID)
+      if (this.#stops.get(sessionID)?.failed) {
+        this.#stops.delete(sessionID)
+        this.#active.delete(sessionID)
+        this.#settleActivity(sessionID)
+        this.#emit("session.updated", sessionID)
+      }
     }
   }
 
@@ -771,7 +781,11 @@ export class AcpService {
     await this.#restoreDeletedSessionIndex()
     await this.#restoreTitleIndex()
     const sessions = await this.#refreshSessions()
-    await Promise.all(sessions.map((session) => this.#restoreSnapshot(session.sessionId)))
+    if (this.#historyLoader?.seed) {
+      for (const session of sessions) await this.#restoreSnapshot(session.sessionId)
+    } else {
+      await Promise.all(sessions.map((session) => this.#restoreSnapshot(session.sessionId)))
+    }
     return sessions
       .filter((session) => !directory || sameDirectory(session.cwd, directory))
       .filter((session) => !this.#deletedSessions.has(session.sessionId))
@@ -1051,11 +1065,14 @@ export class AcpService {
     }
     if (!this.#sessions.has(sessionID)) throw new Error("Harness session not found")
 
-    if (this.#isBusy(sessionID)) this.abort(sessionID)
+    if (this.#isBusy(sessionID)) await this.abort(sessionID)
     this.#deletedSessions.add(sessionID)
     await this.#persistDeletedSessionIndex()
     this.#messages.delete(sessionID)
     this.#todos.delete(sessionID)
+    this.#historyWindows.delete(sessionID)
+    this.#stopEpochs.delete(sessionID)
+    this.#stops.delete(sessionID)
     this.#titles.delete(sessionID)
     await this.#persistTitleIndex()
     this.#configOptions.delete(sessionID)
@@ -1147,6 +1164,15 @@ export class AcpService {
 
   async messagePage(sessionID, { limit = 100, before, refresh = false } = {}) {
     const boundedLimit = Math.max(1, Math.min(500, Number(limit) || 100))
+    // A writer keeps its bounded seed plus ACP stream. Older journal cursors are still readable
+    // while it works, but must never be merged into that live transcript under a second id space.
+    if (before && this.#historyLoader?.ownsCursor?.(sessionID, before)) {
+      const cached = this.#messages.get(sessionID) ?? []
+      if (cached.findIndex((message) => message?.info?.id === before) <= 0) {
+        const page = await this.#historyLoader.page(sessionID, { limit: boundedLimit, before })
+        if (page) return page
+      }
+    }
     if (
       this.#journalPageAvailable(sessionID)
       && !refresh
@@ -1185,10 +1211,11 @@ export class AcpService {
     const end = requestedEnd >= 0 ? requestedEnd : messages.length
     const start = Math.max(0, end - boundedLimit)
     const model = this.#configuredModelSelection(sessionID)
+    const hasOlderJournal = start === 0 && this.#historyWindows.get(sessionID)?.hasMore === true
     return {
       messages: messages.slice(start, end),
-      before: start > 0 ? messages[start]?.info?.id ?? null : null,
-      hasMore: start > 0,
+      before: start > 0 || hasOlderJournal ? messages[start]?.info?.id ?? null : null,
+      hasMore: start > 0 || hasOlderJournal,
       ...(model ? { model } : {})
     }
   }
@@ -1541,8 +1568,23 @@ export class AcpService {
    * `{ disposition: "started" | "queued" | "steered", messageID }`.
    */
   async prompt(sessionID, text, model, attachments = [], variant) {
-    return this.#serializePrompt(sessionID, () =>
-      this.#withNativeSession(sessionID, () => this.#prompt(sessionID, text, model, attachments, variant)))
+    const epoch = this.#stopEpochs.get(sessionID) ?? 0
+    this.#checkPromptable(sessionID, epoch)
+    return this.#serializePrompt(sessionID, () => {
+      this.#checkPromptable(sessionID, epoch)
+      return this.#withNativeSession(sessionID, () => this.#prompt(sessionID, text, model, attachments, variant, epoch))
+    })
+  }
+
+  #checkPromptable(sessionID, epoch) {
+    const stopping = this.#stops.has(sessionID) || this.#acp.isSessionStopping?.(sessionID)
+    if (stopping || epoch !== (this.#stopEpochs.get(sessionID) ?? 0)) {
+      const error = new Error(stopping
+        ? "The previous turn is still stopping. Wait for native cancellation before sending another prompt."
+        : "This prompt was cancelled before it started.")
+      error.status = 503
+      throw error
+    }
   }
 
   /**
@@ -1569,7 +1611,7 @@ export class AcpService {
     return this.#acp.withSession(sessionID, this.#sessions.get(sessionID)?.cwd, operation)
   }
 
-  async #prompt(sessionID, text, model, attachments, variant) {
+  async #prompt(sessionID, text, model, attachments, variant, epoch) {
     // Refuse before touching the session: an agent that never advertised image support
     // would reject the block mid-turn, which reads as a failed prompt rather than a
     // rejected attachment.
@@ -1589,6 +1631,7 @@ export class AcpService {
       await this.#load(sessionID)
     }
     await this.#requireSessionDirectory(this.#sessions.get(sessionID))
+    this.#checkPromptable(sessionID, epoch)
     this.#resetActionsForSessionChange(sessionID)
     // A non-empty queue without an active turn is a queued prompt applying its model before it
     // starts; a new prompt waits behind it rather than overtaking it.
@@ -1596,7 +1639,7 @@ export class AcpService {
       if (this.#active.has(sessionID) && this.#midTurnPrompt === "steer" && !SLASH_PROMPT.test(text)) {
         // A harness that documents taking input while working gets the prompt immediately instead of
         // the queue. Slash commands must run as their own turn, so they keep the queue even here.
-        return this.#steerPrompt(sessionID, text, attachments, variant)
+        return this.#steerPrompt(sessionID, text, attachments, variant, epoch)
       }
       // Not acknowledged yet: the running turn may still echo its own prompt, and this one reaches
       // the harness only when it is dequeued (see #startTurn).
@@ -1610,6 +1653,7 @@ export class AcpService {
     const savedModel = this.#fallbackModelSelections.get(sessionID)
     const selection = model ?? (savedModel ? `${savedModel.providerID}/${savedModel.modelID}` : undefined)
     if (selection) await this.setModel(sessionID, selection, variant)
+    this.#checkPromptable(sessionID, epoch)
     return { disposition: "started", messageID: this.#startTurn(sessionID, text, false, attachments) }
   }
 
@@ -1728,7 +1772,7 @@ export class AcpService {
    *   input itself. The recorded prompt then joins the ordinary queue - the message id stays, so
    *   nothing is redelivered twice.
    */
-  async #steerPrompt(sessionID, text, attachments, variant) {
+  async #steerPrompt(sessionID, text, attachments, variant, epoch) {
     const messageID = this.#recordPrompt(sessionID, text, attachments)
     this.#emit("session.updated", sessionID)
     const generationAtSteer = this.#turnGenerations.get(sessionID)
@@ -1739,6 +1783,7 @@ export class AcpService {
         prompt: this.#promptBlocks(text, attachments)
       }, 300_000)
     } catch (error) {
+      this.#checkPromptable(sessionID, epoch)
       if (this.#active.has(sessionID)) {
         const queue = this.#queues.get(sessionID) ?? []
         queue.push({ text, model: undefined, messageID, attachments, variant })
@@ -1752,6 +1797,7 @@ export class AcpService {
       this.#startTurn(sessionID, text, true, attachments)
       return { disposition: "started", messageID }
     }
+    this.#checkPromptable(sessionID, epoch)
     if (result?.outcome !== "startedNewTurn") {
       // The live turn now answers the steered prompt, so whatever it streams next belongs after that
       // recorded user row. Appending it to the reply already open above the row left the steered
@@ -1986,6 +2032,12 @@ export class AcpService {
     if (this.#historyLoader && !this.#ownedSessions.has(sessionID)) {
       throw new Error("This session is not active in the app")
     }
+    const existingStop = this.#stops.get(sessionID)
+    if (existingStop && !existingStop.failed) {
+      this.#acp.notify("session/cancel", { sessionId: sessionID })
+      return this.#waitForStop(existingStop.promise)
+    }
+    this.#stopEpochs.set(sessionID, (this.#stopEpochs.get(sessionID) ?? 0) + 1)
     // A Stop also ends any adopted steering turn: the harness cancel is definitive either way.
     this.#discardAdoptedTurn(sessionID)
     const queue = this.#queues.get(sessionID)
@@ -1998,11 +2050,10 @@ export class AcpService {
       }
       this.#emit("message.updated", sessionID)
     }
-    const wasActive = this.#active.has(sessionID)
+    const wasActive = this.#active.has(sessionID) || this.#acp.isSessionStopping?.(sessionID)
     this.#turnGenerations.set(sessionID, (this.#turnGenerations.get(sessionID) ?? 0) + 1)
     this.#cancelledSessions.add(sessionID)
     this.#turnResponseObserved.delete(sessionID)
-    this.#active.delete(sessionID)
     this.#chunkMessageIDs.delete(`${sessionID}:assistant`)
     // A cancelled turn gets no closing tool_call_update at all, so settle before it is published.
     this.#settleActivity(sessionID)
@@ -2012,9 +2063,43 @@ export class AcpService {
       this.#messages.set(sessionID, messages)
       if (markLatestTurnInterrupted(messages, sessionID)) this.#emit("message.updated", sessionID)
     }
-    this.#acp.notify("session/cancel", { sessionId: sessionID })
     this.#emit("session.updated", sessionID)
     this.#persistSnapshot(sessionID)
+    const finish = () => {
+      this.#active.delete(sessionID)
+      this.#settleActivity(sessionID)
+      this.#emit("session.updated", sessionID)
+      this.#persistSnapshot(sessionID)
+    }
+    if (!wasActive || typeof this.#acp.cancelSession !== "function") {
+      finish()
+      this.#acp.notify("session/cancel", { sessionId: sessionID })
+      return
+    }
+    const stop = { failed: false }
+    this.#stops.set(sessionID, stop)
+    stop.promise = Promise.resolve().then(() => this.#acp.cancelSession(sessionID)).then(() => {
+      if (this.#stops.get(sessionID) !== stop) return
+      this.#stops.delete(sessionID)
+      finish()
+    }, (error) => {
+      stop.failed = true
+      this.#emit("session.error", sessionID, { message: error.message })
+      throw error
+    })
+    void stop.promise.catch(() => {})
+    return this.#waitForStop(stop.promise)
+  }
+
+  #waitForStop(promise) {
+    let timer
+    return Promise.race([promise, new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        const error = new Error("Native cancellation has not been confirmed. This session is still stopping.")
+        error.status = 503
+        reject(error)
+      }, 5_000)
+    })]).finally(() => clearTimeout(timer))
   }
 
   status(sessionID) {
@@ -2155,6 +2240,7 @@ export class AcpService {
   async #readSnapshot(sessionID) {
     await this.#restoreTitleIndex()
     try {
+      if (this.#historyLoader?.seed && (await stat(this.#snapshotPath(sessionID))).size > 8 * 1024 * 1024) return
       const snapshot = JSON.parse(await readFile(this.#snapshotPath(sessionID), "utf8"))
       if (snapshot?.version !== 1) return
       // A freshly created Session is already loaded in this process. Its first snapshot can still
@@ -2260,7 +2346,8 @@ export class AcpService {
 
   /** A queued prompt is still outstanding work, so the session must not read as idle between turns. */
   #isBusy(sessionID) {
-    return this.#active.has(sessionID) || Boolean(this.#queues.get(sessionID)?.length)
+    return this.#active.has(sessionID) || this.#stops.has(sessionID)
+      || this.#acp.isSessionStopping?.(sessionID) === true || Boolean(this.#queues.get(sessionID)?.length)
   }
 
   /**
@@ -2362,9 +2449,18 @@ export class AcpService {
     const previousMessageSnapshot = semanticHistorySignature(previousMessages)
     if (this.#historyLoader) {
       try {
-        const persistedMessages = await this.#historyLoader(sessionID, {
-          activeSessionLeaf: authoritativeState?.activeSessionLeaf
-        })
+        let persistedMessages
+        if (this.#historyLoader.seed && this.#journalSeedsOwnedTranscript()) {
+          const seed = await this.#historyLoader.seed(sessionID)
+          if (!seed) throw new HistoryReadError("Native journal is unavailable for bounded resume", "HISTORY_READ_UNAVAILABLE", 503)
+          // The page cache is shared read state; the live transcript mutates message/part objects.
+          persistedMessages = structuredClone(seed.messages)
+          this.#historyWindows.set(sessionID, { hasMore: seed.hasMore === true })
+        } else {
+          persistedMessages = await this.#historyLoader(sessionID, {
+            activeSessionLeaf: authoritativeState?.activeSessionLeaf
+          })
+        }
         if (this.#journalSeedsOwnedTranscript()) {
           // The journal is the whole conversation while nothing here is writing it, and the seed
           // for the stream once something is. Merging the two would union two id spaces for the
@@ -2418,6 +2514,12 @@ export class AcpService {
     // this Session may have exited since. A project-scoped client starts its own process per request.
     await this.#requireSessionDirectory(session)
     if (typeof this.#acp.withSession !== "function") await this.#acp.start?.()
+    if (this.#historyLoader?.seed && this.#journalSeedsOwnedTranscript()
+      && !this.#acp.sessionCapabilities?.resume) {
+      const error = new Error("This Codex adapter does not advertise bounded session/resume; update it before continuing. Full-history replay was not attempted.")
+      error.status = 503
+      throw error
+    }
     if (await this.#openWithoutReplay(sessionID, session)) return
     this.#replaying.add(sessionID)
     this.#messages.set(sessionID, [])

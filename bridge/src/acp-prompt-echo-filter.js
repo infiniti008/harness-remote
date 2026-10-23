@@ -31,6 +31,8 @@ export class AcpPromptEchoFilter extends EventEmitter {
     // Preserve the optional project lease through this transport decorator. Model selection and
     // prompt dispatch must stay on the same native process even while other projects are opened.
     if (typeof acp.withSession === "function") this.withSession = acp.withSession.bind(acp)
+    if (typeof acp.cancelSession === "function") this.cancelSession = acp.cancelSession.bind(acp)
+    if (typeof acp.isSessionStopping === "function") this.isSessionStopping = acp.isSessionStopping.bind(acp)
     acp.on("notification", (notification) => {
       if (!this.#isPromptEcho(notification)) this.emit("notification", notification)
     })

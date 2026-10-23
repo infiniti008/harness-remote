@@ -545,7 +545,7 @@ export function createBridgeServer({ config, acp, serviceOptions, machineRegistr
           return
         }
         if (request.method === "POST" && operation === "abort") {
-          service.abort(sessionID)
+          await service.abort(sessionID)
           writeJSON(response, 200, true)
           return
         }

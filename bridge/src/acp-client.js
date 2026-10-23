@@ -49,7 +49,7 @@ export class AcpClient extends EventEmitter {
     super()
     this.#command = command
     this.#args = args
-    this.#permissionMode = permissionMode
+    this.#permissionMode = process.env.HARNESS_REMOTE_PERMISSION_MODE === "deny" ? "deny" : permissionMode
     this.#preferredAuthMethod = preferredAuthMethod
     this.#authenticate = authenticate !== false
     this.#environment = environment && typeof environment === "object" ? { ...environment } : {}
@@ -258,10 +258,12 @@ export class AcpClient extends EventEmitter {
         timeoutMs,
         resetTimeout: undefined
       }
+      pending.finished = new Promise((resolve) => { pending.finish = resolve })
       const expire = () => {
         const error = new Error(`ACP adapter request timed out: ${method}${method === "session/prompt" ? ` (no session activity for ${timeoutMs}ms; cancellation requested)` : ""}`)
         if (method !== "session/prompt" || !pending.sessionID) {
           this.#pending.delete(id)
+          pending.finish()
           reject(error)
           return
         }
@@ -286,7 +288,9 @@ export class AcpClient extends EventEmitter {
       this.#child.stdin.write(`${message}\n`, (error) => {
         if (error) {
           clearTimeout(pending.timer)
+          clearTimeout(pending.cancelRetryTimer)
           this.#pending.delete(id)
+          pending.finish()
           reject(error)
         }
       })
@@ -298,7 +302,7 @@ export class AcpClient extends EventEmitter {
       throw new Error("ACP adapter is not running")
     }
     if (method === "session/cancel" && typeof params?.sessionId === "string") {
-      for (const pending of this.#pending.values()) {
+      for (const [pendingID, pending] of this.#pending) {
         if (pending.method !== "session/prompt" || pending.sessionID !== params.sessionId || pending.cancelRequested) continue
         pending.cancelRequested = true
         pending.resetTimeout = undefined
@@ -309,9 +313,40 @@ export class AcpClient extends EventEmitter {
           pending.reject(pending.timeoutError)
           // Retain the writer guard until the original response or process exit confirms teardown.
         }, PROMPT_CANCEL_TIMEOUT_MS)
+        // A native turn can start after the first cancel notification has been handled. Retry
+        // idempotent cancellation for a bounded period, retaining the original writer guard.
+        let attempts = 0
+        const retry = () => {
+          if (this.#pending.get(pendingID) !== pending || !this.#child?.stdin.writable) return
+          this.#child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`)
+          if (++attempts < 60) pending.cancelRetryTimer = setTimeout(retry, 500)
+          else pending.cancelRetryExhausted = true
+        }
+        pending.cancelRetryTimer = setTimeout(retry, 500)
       }
     }
     this.#child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`)
+  }
+
+  cancelSession(sessionID) {
+    const pending = [...this.#pending.values()].find((entry) => entry.method === "session/prompt" && entry.sessionID === sessionID)
+    this.notify("session/cancel", { sessionId: sessionID })
+    if (!pending) {
+      // No prompt response exists to acknowledge an adopted turn. Closing the native Session is
+      // an explicit writer teardown when advertised; it does not delete stored history.
+      if (this.#sessionCapabilities.close) return this.request("session/close", { sessionId: sessionID }).then(() => {
+        this.emit("sessions-closed", [sessionID])
+      })
+      const error = new Error("Native cancellation cannot be confirmed without a tracked prompt")
+      error.status = 503
+      return Promise.reject(error)
+    }
+    return pending.finished
+  }
+
+  isSessionStopping(sessionID) {
+    return [...this.#pending.values()].some((pending) => pending.method === "session/prompt"
+      && pending.sessionID === sessionID && pending.cancelRequested)
   }
 
   async listSessionPage(cursor) {
@@ -378,7 +413,9 @@ export class AcpClient extends EventEmitter {
       const pending = this.#pending.get(message.id)
       if (!pending) return
       clearTimeout(pending.timer)
+      clearTimeout(pending.cancelRetryTimer)
       this.#pending.delete(message.id)
+      pending.finish()
       if (pending.timeoutError) pending.reject(pending.timeoutError)
       else if (message.error) pending.reject(new Error(acpErrorMessage(message.error)))
       else pending.resolve(message.result)
@@ -391,6 +428,13 @@ export class AcpClient extends EventEmitter {
     for (const pending of this.#pending.values()) {
       if (pending.method !== "session/prompt" || pending.sessionID !== sessionID) continue
       pending.resetTimeout?.()
+      // A quiet native preparation may outlast the bounded retry loop. Its first later activity
+      // must still see the pending Stop, without a permanent polling loop for a silent adapter.
+      if (pending.cancelRequested && pending.cancelRetryExhausted
+        && Date.now() - (pending.lastCancelActivityAt ?? 0) >= 500) {
+        pending.lastCancelActivityAt = Date.now()
+        try { this.notify("session/cancel", { sessionId: sessionID }) } catch { /* exit owns teardown */ }
+      }
     }
   }
 
@@ -442,6 +486,8 @@ export class AcpClient extends EventEmitter {
   #rejectPending(error) {
     for (const pending of this.#pending.values()) {
       clearTimeout(pending.timer)
+      clearTimeout(pending.cancelRetryTimer)
+      pending.finish()
       pending.reject(error)
     }
     this.#pending.clear()

@@ -182,7 +182,7 @@ test("Stop retains the native writer until cancellation is acknowledged", async 
     assert.deepEqual(await client.request("session/prompt", { sessionId: "other" }), { stopReason: "end_turn" })
     child.respond({ jsonrpc: "2.0", id: original.id, result: { stopReason: "cancelled" } })
     assert.deepEqual(await client.request("session/prompt", { sessionId: "stopping" }), { stopReason: "end_turn" })
-    assert.equal(cancels, 1)
+    assert.ok(cancels >= 2, "an early cancel is retried while the native writer remains active")
     assert.equal(child.killed, false)
   } finally { await client.close() }
 })
@@ -234,4 +234,130 @@ test("long silent turns stay busy beyond five minutes and settle on the native r
     server.emit("close")
     await client.close()
   }
+})
+
+
+test("early Stop waits for a turn that starts late, blocks a new prompt and drops cancelled text", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  let original
+  let nativeReady = false
+  let prompts = 0
+  let cancels = 0
+  const child = new FakeChild((current, request) => {
+    handshake(current, request)
+    if (request.method === "session/list") current.respond({ jsonrpc: "2.0", id: request.id,
+      result: { sessions: [{ sessionId: "early", cwd: "/tmp" }] } })
+    if (request.method === "session/load") current.respond({ jsonrpc: "2.0", id: request.id, result: {} })
+    if (request.method === "session/prompt") {
+      prompts++
+      if (prompts === 1) original = request
+      else {
+        current.respond({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "early",
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "NEXT" } } } })
+        current.respond({ jsonrpc: "2.0", id: request.id, result: { stopReason: "end_turn" } })
+      }
+    }
+    if (request.method === "session/cancel") {
+      cancels++
+      if (nativeReady) current.respond({ jsonrpc: "2.0", id: original.id, result: { stopReason: "cancelled" } })
+    }
+  })
+  const client = new AcpClient({ spawnProcess: () => child })
+  const server = createBridgeServer({ config: { backend: "opencode2" }, acp: client })
+  const service = server.acpService
+  try {
+    await client.start()
+    await service.prompt("early", "original long story")
+    let stopped = false
+    const stop = service.abort("early").then(() => { stopped = true })
+    await Promise.resolve()
+    assert.equal(stopped, false, "Stop cannot acknowledge an unstarted native turn")
+    assert.equal(service.status("early").type, "busy")
+    await assert.rejects(service.prompt("early", "must not enter the old turn"), { status: 503 })
+    child.respond({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "early",
+      update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "OLD STORY" } } } })
+    nativeReady = true
+    t.mock.timers.tick(500)
+    await stop
+    assert.equal(cancels, 2)
+    assert.equal(service.status("early").type, "idle")
+    assert.equal(client.diagnostics().pendingRequestCount, 0)
+    await service.prompt("early", "next")
+    await Promise.resolve()
+    const text = (await service.messages("early")).flatMap((message) => message.parts).map((part) => part.text ?? "").join(" ")
+    assert.match(text, /NEXT/)
+    assert.doesNotMatch(text, /OLD STORY|must not enter/)
+    assert.equal(prompts, 2)
+  } finally { await client.close() }
+})
+
+
+test("unconfirmed Stop returns an error and keeps its guard until late acknowledgement", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  let original
+  let cancels = 0
+  const child = new FakeChild((current, request) => {
+    handshake(current, request)
+    if (request.method === "session/cancel") cancels++
+    if (request.method === "session/list") current.respond({ jsonrpc: "2.0", id: request.id,
+      result: { sessions: [{ sessionId: "late", cwd: "/tmp" }] } })
+    if (request.method === "session/load") current.respond({ jsonrpc: "2.0", id: request.id, result: {} })
+    if (request.method === "session/prompt") original = request
+  })
+  const client = new AcpClient({ spawnProcess: () => child })
+  const server = createBridgeServer({ config: { backend: "opencode2" }, acp: client })
+  const service = server.acpService
+  try {
+    await client.start()
+    await service.prompt("late", "first")
+    const stop = assert.rejects(service.abort("late"), { status: 503 })
+    await Promise.resolve()
+    t.mock.timers.tick(5_000)
+    await stop
+    assert.equal(service.status("late").type, "busy")
+    await assert.rejects(service.prompt("late", "blocked"), { status: 503 })
+    for (let count = 0; count < 60; count++) t.mock.timers.tick(500)
+    const beforeActivity = cancels
+    child.respond({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "late",
+      update: { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "late native start" } } } })
+    assert.equal(cancels, beforeActivity + 1, "late activity retries cancellation after the bounded polling window")
+    child.respond({ jsonrpc: "2.0", id: original.id, result: { stopReason: "cancelled" } })
+    await Promise.resolve()
+    await Promise.resolve()
+    assert.equal(client.diagnostics().pendingRequestCount, 0)
+    assert.equal(service.status("late").type, "idle")
+  } finally { await client.close() }
+})
+
+test("Stop during preparation cancels both undispatched prompts without entering the adapter", async () => {
+  let load
+  let onLoad
+  const loading = new Promise((resolve) => { onLoad = resolve })
+  let prompts = 0
+  const child = new FakeChild((current, request) => {
+    handshake(current, request)
+    if (request.method === "session/list") current.respond({ jsonrpc: "2.0", id: request.id,
+      result: { sessions: [{ sessionId: "preparing", cwd: "/tmp" }] } })
+    if (request.method === "session/load") { load = request; onLoad() }
+    if (request.method === "session/prompt") {
+      prompts++
+      current.respond({ jsonrpc: "2.0", id: request.id, result: { stopReason: "end_turn" } })
+    }
+  })
+  const client = new AcpClient({ spawnProcess: () => child })
+  const server = createBridgeServer({ config: { backend: "opencode2" }, acp: client })
+  const service = server.acpService
+  try {
+    await client.start()
+    const first = assert.rejects(service.prompt("preparing", "first"), { status: 503 })
+    await loading
+    const queued = assert.rejects(service.prompt("preparing", "also cancelled"), { status: 503 })
+    await service.abort("preparing")
+    child.respond({ jsonrpc: "2.0", id: load.id, result: {} })
+    await Promise.all([first, queued])
+    assert.equal(prompts, 0)
+    assert.equal(client.diagnostics().pendingRequestCount, 0)
+    await service.prompt("preparing", "fresh after stop")
+    assert.equal(prompts, 1)
+  } finally { await client.close() }
 })

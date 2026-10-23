@@ -263,9 +263,19 @@ test("cancelling a turn leaves no invented interruption in the transcript", asyn
   try {
     const sessionID = (await service.createSession({ directory: "/repo" })).id
     acp.queueTurn({ reasoning: ["Half a thought"], text: ["Never sent"] })
+    let nativeTurn
+    const request = acp.request.bind(acp)
+    acp.request = (method, ...args) => {
+      const pending = request(method, ...args)
+      if (method === "session/prompt") nativeTurn = pending
+      return pending
+    }
     const running = service.promptAndWait(sessionID, "Prompt 1").catch(() => undefined)
+    // Reach the native turn before stopping it; a pre-dispatch Stop now cancels the prompt itself.
+    while (acp.turns.length) await new Promise((resolve) => setImmediate(resolve))
     service.abort(sessionID)
     await running
+    await nativeTurn // This fixture exposes no cancellation-ack API; drain its journal writes.
 
     assert.equal(service.status(sessionID).type, "idle", "a cancelled Session must read Ready")
     const messages = await tail(service, sessionID)

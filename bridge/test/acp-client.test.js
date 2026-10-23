@@ -348,6 +348,21 @@ test("cancels a permission request unless the harness profile allows tools", asy
   client.close()
 })
 
+test("candidate deny policy overrides an allow profile and declines escalation", async () => {
+  const previous = process.env.HARNESS_REMOTE_PERMISSION_MODE
+  process.env.HARNESS_REMOTE_PERMISSION_MODE = "deny"
+  const child = permissionAskingChild()
+  const client = new AcpClient({ permissionMode: "allow", spawnProcess: () => child })
+  if (previous === undefined) delete process.env.HARNESS_REMOTE_PERMISSION_MODE
+  else process.env.HARNESS_REMOTE_PERMISSION_MODE = previous
+  try {
+    await client.start()
+    await client.request("session/prompt", {})
+    const reply = child.writes.find((message) => message.id === 99)
+    assert.deepEqual(reply.result.outcome, { outcome: "cancelled" })
+  } finally { await client.close() }
+})
+
 test("still declines agent-initiated requests it does not implement", async () => {
   const child = new FakeChild((current, request) => {
     respondToHandshake(current, request)

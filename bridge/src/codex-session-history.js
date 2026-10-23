@@ -97,7 +97,8 @@ async function readCodexPage(file, sessionID, { limit = 100, before } = {}, limi
     const { size } = await handle.stat()
     let end = size
     if (before !== undefined && before !== null && before !== "") {
-      const parsed = Number(before)
+      const prefix = `${sessionID}:byte:`
+      const parsed = Number(typeof before === "string" && before.startsWith(prefix) ? before.slice(prefix.length) : before)
       if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > size) {
         throw new HistoryReadError("Invalid Codex history cursor", "INVALID_HISTORY_CURSOR", 400)
       }
@@ -237,6 +238,9 @@ export function createCodexHistoryLoader(sessionRoot = path.join(process.env.COD
     return createHash("sha256").update(JSON.stringify([sessionID, revision,
       Math.max(1, Math.min(500, Number(options.limit) || 100)), options.before ?? null])).digest("hex")
   }
+  // This window is display state only. Native resume retains Codex's full model context.
+  sharedLoader.seed = (sessionID) => sharedLoader.page(sessionID, { limit: 200 })
+  sharedLoader.ownsCursor = (sessionID, cursor) => typeof cursor === "string" && (cursor.startsWith(`${sessionID}:byte:`) || /^\d+$/.test(cursor))
   // A located journal is authoritative for paging. Errors must not cause full ACP replay.
   sharedLoader.strictPageErrors = true
   sharedLoader.diagnostics = () => ({ cachedSessionPaths: sessionFiles.size, pageCache: pageCache.diagnostics(), coldReads: gate.diagnostics() })

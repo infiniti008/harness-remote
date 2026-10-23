@@ -98,7 +98,33 @@ aggregate memory/CPU limit on the deployment host, Linux amd64/macOS checks, and
 rollback rehearsal. An HA app and a container image are separate later deliverables; neither is
 validated by this portable archive.
 
-Very large full-history reads can now be rejected explicitly, including a resume path that asks the
-bridge to seed its entire display history. A bounded display seed for writer adoption is not yet
-implemented. The native model context is never truncated by these changes. A stable release must
-cover writer adoption, older paging during a live turn and long resumes under the aggregate limit.
+## Candidate 3.5.0-local.2 and remaining lab gates
+
+Codex writer acquisition now reads only a 200-message display seed and calls native
+`session/resume` with the original session id. It neither supplies that seed as model context nor
+rewrites the native rollout. Older history remains accessible through journal pages while the
+writer is active; those pages never expand the live transcript cache. Full-read and oversized-record
+budgets remain unchanged. Adapters without advertised resume support fail explicitly rather than
+falling back to a full replay. Native Codex's own resume allocations still require aggregate limits.
+
+Stop retains the writer guard until the original prompt RPC finishes or its process exits.
+Cancellation is retried every 500 ms for up to 30 seconds to catch a turn that starts after the first
+cancel. HTTP Stop waits up to five seconds for confirmation; otherwise it returns 503 and the Session
+remains stopping. New prompts are rejected with 503 while stopping, including prompts queued before
+Stop during preparation. Late output from the cancelled turn is ignored. An additional Stop can
+retry a failed cancellation. This behavior is confirmed by fake-adapter regression tests; real
+Codex timing must still be repeated in the isolated Docker lab.
+
+The candidate launcher forces ACP permission mode to deny, overriding allow profiles. It never
+automatically selects `allow_once` or `allow_always` for an escalation. The Docker template includes
+bubblewrap, but package installation alone does not enable user namespaces on the host. If bwrap
+cannot create its namespace, a tool failure must remain a failure: do not enable privileged mode,
+use a bypass flag or approve escalation to obtain a passing test. This change does not establish
+that Linux workspace isolation works. Verify an allowed write and a blocked write outside the
+workspace on the actual Docker host before trusting tool execution.
+
+The user's isolated arm64 Docker lab passed a four-hour offline soak on local.1, but found the long
+resume, early Stop and automatic escalation blockers addressed here. That external result is not a
+local.2 acceptance result. Repeat the focused cases described in `docs/LOCAL_2_RETEST.md` before
+promoting this candidate. Home Assistant deployment remains blocked on that acceptance and an
+explicit installation/rollback rehearsal.

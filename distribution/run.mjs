@@ -42,6 +42,9 @@ if (args.includes("--version")) {
     if (backendArg >= 0 && args[backendArg + 1] !== "codex") throw new Error("This candidate launcher is validated for Codex only")
     if (args.some((arg) => arg.startsWith("--backend=") && arg !== "--backend=codex")) throw new Error("This candidate launcher is validated for Codex only")
     process.env.CODEX_PATH = codex
+    // The candidate never approves an ACP sandbox escalation automatically. A denied bwrap
+    // operation must remain denied, even when an adapter offers an allow_once permission.
+    process.env.HARNESS_REMOTE_PERMISSION_MODE = "deny"
     process.env.HARNESS_REMOTE_ACP_ARGS = JSON.stringify(["--v8-pool-size=1", "--max-old-space-size=96", adapter])
     const daemon = fileURLToPath(new URL("bridge/src/daemon-cli.js", root))
     process.argv = [process.execPath, daemon, "--backend", "codex", "--no-opencode", "--acp-command", process.execPath, ...args]

@@ -210,6 +210,19 @@ export class ProjectScopedAcpClient extends EventEmitter {
     return entry.client.notify(method, params)
   }
 
+  cancelSession(sessionID) {
+    const entry = this.#clients.get(this.#rootForRequest("session/cancel", { sessionId: sessionID }))
+    if (!entry) throw new Error("The project adapter is closed")
+    return typeof entry.client.cancelSession === "function"
+      ? entry.client.cancelSession(sessionID)
+      : entry.client.notify("session/cancel", { sessionId: sessionID })
+  }
+
+  isSessionStopping(sessionID) {
+    const entry = this.#clients.get(this.#rootForRequest("session/cancel", { sessionId: sessionID }))
+    return entry?.client.isSessionStopping?.(sessionID) === true
+  }
+
   async close() {
     this.#epoch += 1
     this.#pages.clear()

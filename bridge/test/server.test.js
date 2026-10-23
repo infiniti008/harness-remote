@@ -489,6 +489,50 @@ test("discards queued prompts when the session is aborted", async () => {
   }
 })
 
+test("HTTP Stop acknowledges native teardown before accepting the next prompt", async () => {
+  class ConfirmedStopAcp extends HeldTurnOmpAcp {
+    stopping = false
+    cancelStarted = new Promise((resolve) => { this.onCancel = resolve })
+    cancelSession() {
+      this.stopping = true
+      this.onCancel()
+      return new Promise((resolve) => { this.confirmStop = () => { this.stopping = false; resolve() } })
+    }
+    isSessionStopping() { return this.stopping }
+  }
+  const acp = new ConfirmedStopAcp()
+  const bridge = await startServer({ acp })
+  const send = (text) => fetch(`${bridge.baseURL}/session/session-1/prompt_async`, {
+    method: "POST", headers: jsonHeaders(), body: JSON.stringify({ parts: [{ type: "text", text }] })
+  })
+  try {
+    const started = acp.turnStarted()
+    await send("old")
+    await started
+    let acknowledged = false
+    const stopped = fetch(`${bridge.baseURL}/session/session-1/abort`, {
+      method: "POST", headers: authHeaders()
+    }).then((response) => { acknowledged = true; return response })
+    await acp.cancelStarted
+    assert.equal((await send("blocked")).status, 503)
+    assert.equal(acknowledged, false)
+    assert.deepEqual(acp.prompts, ["old"])
+    acp.releaseTurn()
+    acp.confirmStop()
+    assert.equal((await stopped).status, 200)
+    const next = acp.turnStarted()
+    assert.equal((await send("next")).status, 200)
+    await next
+    acp.releaseTurn()
+    await waitForIdle(bridge.baseURL, "session-1")
+    assert.deepEqual(acp.prompts, ["old", "next"])
+  } finally {
+    acp.confirmStop?.()
+    acp.releaseTurn()
+    await bridge.close()
+  }
+})
+
 test("keeps the submitted prompt in history when the session is reopened", async () => {
   const bridge = await startServer({ acp: new RealisticOmpAcp() })
   try {

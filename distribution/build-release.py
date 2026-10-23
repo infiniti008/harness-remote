@@ -97,6 +97,9 @@ def main():
         shutil.copytree(ROOT / 'bridge/scripts', stage / 'bridge/scripts')
         shutil.copytree(ROOT / 'web/dist', stage / 'web')
         (stage / 'distribution').mkdir()
+        (stage / 'docs').mkdir()
+        for name in ['LOCAL_2_RETEST.md', 'LOCAL_2_VALIDATION.md']:
+            shutil.copy2(ROOT / 'docs' / name, stage / 'docs' / name)
         shutil.copy2(ROOT / 'distribution/run.mjs', stage / 'distribution/run.mjs')
         shutil.copy2(ROOT / 'distribution/README.md', stage / 'README-LOCAL.md')
         extract_package(verified_package('qrcode-terminal'), stage / 'node_modules/qrcode-terminal')

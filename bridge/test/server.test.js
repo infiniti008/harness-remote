@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import test from "node:test"
+import { LOCAL_RELEASE_INFO } from "../src/local-release-info.js"
 import { createBridgeServer } from "../src/server.js"
 import { AcpService, chronologicalReplay, isHarnessInjectedText, isInterruptionMarker, markLatestTurnInterrupted } from "../src/acp-service.js"
 
@@ -636,7 +637,7 @@ test("serves health and OpenCode-compatible sessions with authentication", async
   const bridge = await startServer()
   try {
     const health = await fetch(`${bridge.baseURL}/global/health`, { headers: authHeaders() })
-    assert.deepEqual(await health.json(), { healthy: true, backend: "omp", version: "17.0.7" })
+    assert.deepEqual(await health.json(), { healthy: true, ...LOCAL_RELEASE_INFO, backend: "omp", version: "17.0.7" })
     const sessions = await fetch(`${bridge.baseURL}/session`, { headers: authHeaders() })
     const body = await sessions.json()
     assert.equal(body.length, 1)
@@ -651,7 +652,7 @@ test("reports the configured ACP backend", async () => {
   const bridge = await startServer({ backend: "pi" })
   try {
     const health = await fetch(`${bridge.baseURL}/global/health`, { headers: authHeaders() })
-    assert.deepEqual(await health.json(), { healthy: true, backend: "pi", version: "17.0.7" })
+    assert.deepEqual(await health.json(), { healthy: true, ...LOCAL_RELEASE_INFO, backend: "pi", version: "17.0.7" })
   } finally {
     await bridge.close()
   }

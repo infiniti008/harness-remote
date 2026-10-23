@@ -151,13 +151,15 @@ export class AcpClient extends EventEmitter {
     const windowsArgs = windowsCommand === this.#command
       ? this.#args
       : ["/d", "/s", "/c", this.#command, ...this.#args]
+    const ownProcessGroup = process.platform !== "win32" && this.#spawn === spawn
     const child = this.#spawn(windowsCommand, windowsArgs, {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
+      detached: ownProcessGroup,
       env: { ...process.env, ...this.#environment },
       ...(this.#cwd ? { cwd: this.#cwd } : {})
     })
-    ownChildProcess(child)
+    ownChildProcess(child, { processGroup: ownProcessGroup })
     this.#child = child
     // Each attempt reports its own stderr. Carrying the buffer across restarts made every exit
     // message repeat the previous ones, so a single "pi-acp: not found" arrived three times over.

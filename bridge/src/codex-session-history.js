@@ -1,5 +1,8 @@
-import { createReadStream } from "node:fs"
-import { open, readdir } from "node:fs/promises"
+import { RevisionPageCache } from "./revision-page-cache.js"
+import { createHash } from "node:crypto"
+import { forwardLines } from "./forward-line-scan.js"
+import { HistoryReadBudget, HistoryReadError, HistoryReadGate } from "./history-read-budget.js"
+import { open, readdir, stat } from "node:fs/promises"
 import { homedir } from "node:os"
 import path from "node:path"
 import { scanLinesBackward } from "./backward-line-scan.js"
@@ -84,24 +87,8 @@ function modelFromTurnContext(record) {
   return { providerID: "codex", modelID, ...(variant ? { variant } : {}) }
 }
 
-async function* forwardLines(file) {
-  let pending = Buffer.alloc(0)
-  let pendingStart = 0
-  for await (const chunk of createReadStream(file)) {
-    const data = pending.length > 0 ? Buffer.concat([pending, chunk]) : chunk
-    let lineStart = 0
-    for (let index = 0; index < data.length; index += 1) {
-      if (data[index] !== 0x0a) continue
-      yield { line: data.subarray(lineStart, index), offset: pendingStart + lineStart }
-      lineStart = index + 1
-    }
-    pending = lineStart < data.length ? Buffer.from(data.subarray(lineStart)) : Buffer.alloc(0)
-    pendingStart += lineStart
-  }
-  if (pending.length > 0) yield { line: pending, offset: pendingStart }
-}
-
-async function readCodexPage(file, sessionID, { limit = 100, before } = {}) {
+async function readCodexPage(file, sessionID, { limit = 100, before } = {}, limits) {
+  const budget = new HistoryReadBudget(limits)
   const boundedLimit = Math.max(1, Math.min(500, Number(limit) || 100))
   const handle = await open(file, "r")
   try {
@@ -110,7 +97,7 @@ async function readCodexPage(file, sessionID, { limit = 100, before } = {}) {
     if (before !== undefined && before !== null && before !== "") {
       const parsed = Number(before)
       if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > size) {
-        throw new Error("Invalid Codex history cursor")
+        throw new HistoryReadError("Invalid Codex history cursor", "INVALID_HISTORY_CURSOR", 400)
       }
       end = parsed
     }
@@ -121,7 +108,7 @@ async function readCodexPage(file, sessionID, { limit = 100, before } = {}) {
     const needMore = (chunkEnd) => found.length <= boundedLimit
       || (!before && !currentModel && chunkEnd > modelSearchFloor)
 
-    for await (const { line, offset, chunkEnd } of scanLinesBackward(handle, { from: end })) {
+    for await (const { line, offset, chunkEnd } of scanLinesBackward(handle, { from: end, budget })) {
       if (!needMore(chunkEnd)) break
       const record = recordFromLine(line)
       // Only the newest-page read describes the Session's current model. Older page requests
@@ -129,7 +116,10 @@ async function readCodexPage(file, sessionID, { limit = 100, before } = {}) {
       if (!before && !currentModel) currentModel = modelFromTurnContext(record)
       if (found.length <= boundedLimit) {
         const message = messageFromRecord(sessionID, record, offset)
-        if (message) found.push({ message, offset })
+        if (message) {
+          budget.message(message)
+          found.push({ message, offset })
+        }
       }
       if (found.length > boundedLimit && (before || currentModel)) break
     }
@@ -163,8 +153,9 @@ async function readCodexPage(file, sessionID, { limit = 100, before } = {}) {
  * records also hold instruction blocks Codex feeds the model, AGENTS.md, the plugin list and desktop
  * app context under the `user` role, which would surface as the user's own turns.
  */
-export function createCodexHistoryLoader(sessionRoot = path.join(process.env.CODEX_HOME || path.join(homedir(), ".codex"), "sessions")) {
+export function createCodexHistoryLoader(sessionRoot = path.join(process.env.CODEX_HOME || path.join(homedir(), ".codex"), "sessions"), { pageLimits, fullLimits, gateOptions, cacheOptions } = {}) {
   const sessionFiles = new Map()
+  const gate = new HistoryReadGate(gateOptions)
 
   async function locateSession(sessionID) {
     const known = sessionFiles.get(sessionID)
@@ -188,10 +179,16 @@ export function createCodexHistoryLoader(sessionRoot = path.join(process.env.COD
   const loadCodexHistory = async function loadCodexHistory(sessionID) {
     const file = await locateSession(sessionID)
     if (!file) return []
+    const budget = new HistoryReadBudget({ maxReadBytes: 64 * 1024 * 1024, maxTextBytes: 8 * 1024 * 1024, ...fullLimits })
+    const info = await stat(file)
+    if (info.size > budget.maxReadBytes) throw new HistoryReadError("Full history exceeds the safe read size; open it with paging")
     const messages = []
-    for await (const { line, offset } of forwardLines(file)) {
+    for await (const { line, offset } of forwardLines(file, { budget })) {
       const message = messageFromLine(sessionID, line, offset)
-      if (message) messages.push(message)
+      if (message) {
+        budget.message(message)
+        messages.push(message)
+      }
     }
     return messages
   }
@@ -202,8 +199,44 @@ export function createCodexHistoryLoader(sessionRoot = path.join(process.env.COD
     // local tree while ACP session/load can still replay it. Let AcpService distinguish that from a
     // located, genuinely empty rollout and fall through to the protocol source.
     if (!file) return undefined
-    return readCodexPage(file, sessionID, options)
+    return readCodexPage(file, sessionID, options, pageLimits)
   }
 
-  return loadCodexHistory
+  const fullReads = new Map()
+  const pageCache = new RevisionPageCache(cacheOptions)
+  const share = (pending, key, start) => {
+    const active = pending.get(key)
+    if (active) return active
+    const work = Promise.resolve().then(start)
+    pending.set(key, work)
+    void work.finally(() => { if (pending.get(key) === work) pending.delete(key) }).catch(() => {})
+    return work
+  }
+  const sharedLoader = (sessionID) => share(fullReads, sessionID, () => gate.run(() => loadCodexHistory(sessionID)))
+  Object.assign(sharedLoader, loadCodexHistory)
+  const revisionOf = async (file) => {
+    const info = await stat(file, { bigint: true })
+    return [info.dev, info.ino, info.size, info.mtimeNs, info.ctimeNs].join(":")
+  }
+  sharedLoader.page = async (sessionID, options = {}) => {
+    const file = await locateSession(sessionID)
+    if (!file) return undefined
+    const revision = await revisionOf(file)
+    const query = [Math.max(1, Math.min(500, Number(options.limit) || 100)), options.before ?? null]
+    return pageCache.read({ scope: file, revision, query,
+      load: () => gate.run(() => readCodexPage(file, sessionID, options, pageLimits)),
+      current: async () => { try { return await revisionOf(file) === revision } catch { return false } }
+    })
+  }
+  sharedLoader.pageRevision = async (sessionID, options = {}) => {
+    const file = await locateSession(sessionID)
+    if (!file) return undefined
+    const revision = await revisionOf(file)
+    return createHash("sha256").update(JSON.stringify([sessionID, revision,
+      Math.max(1, Math.min(500, Number(options.limit) || 100)), options.before ?? null])).digest("hex")
+  }
+  // A located journal is authoritative for paging. Errors must not cause full ACP replay.
+  sharedLoader.strictPageErrors = true
+  sharedLoader.diagnostics = () => ({ cachedSessionPaths: sessionFiles.size, pageCache: pageCache.diagnostics(), coldReads: gate.diagnostics() })
+  return sharedLoader
 }

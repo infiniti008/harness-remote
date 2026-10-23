@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promis
 import path from "node:path"
 import { selectableAcpModelValue, modelConfigOptionFromSessionResponse, modelValueIsExcluded, normalizedAcpModelCandidates, splitInlineAcpModelVariant } from "./agent-model-catalog.js"
 import { TranscriptCache } from "./transcript-cache.js"
+import { isHistoryReadError } from "./history-read-budget.js"
 import { DEFAULT_PROMPT_IDLE_TIMEOUT_MS } from "./config.js"
 import {
   listExtensionActions,
@@ -1133,7 +1134,8 @@ export class AcpService {
         this.#loaded.add(sessionID)
         this.#persistSnapshot(sessionID)
         return messages
-      } catch {
+      } catch (error) {
+        if (isHistoryReadError(error)) throw error
         this.#emit("session.error", sessionID, { message: "Harness session history could not be read" })
       }
     }
@@ -1170,8 +1172,9 @@ export class AcpService {
             return page
           }
         }
-      } catch {
+      } catch (error) {
         this.#emit("session.error", sessionID, { message: "Harness session history page could not be read" })
+        if (isHistoryReadError(error) || this.#historyLoader.strictPageErrors) throw error
       }
     }
     const messages = await this.messages(sessionID, refresh)
@@ -1187,6 +1190,12 @@ export class AcpService {
       hasMore: start > 0,
       ...(model ? { model } : {})
     }
+  }
+
+  async messagePageRevision(sessionID, { limit = 100, before, refresh = false } = {}) {
+    if (refresh || this.#isBusy(sessionID) || this.#transientFailureMessageIDs.get(sessionID)?.size
+      || !this.#journalPageAvailable(sessionID) || !this.#historyLoader?.pageRevision) return undefined
+    return this.#historyLoader.pageRevision(sessionID, { limit, before })
   }
 
   /**
@@ -2397,7 +2406,7 @@ export class AcpService {
         // A harness whose ACP load is a replay has no second source to fall back on, so an
         // unreadable journal has to be reported as a failed read. Answering with an empty
         // transcript instead is how a Session that is merely unreadable came to look deleted.
-        if (this.#historyLoader.journalOnly === true) {
+        if (this.#historyLoader.journalOnly === true || isHistoryReadError(error)) {
           this.#messages.set(sessionID, previousMessages)
           this.#todos.set(sessionID, previousTodos)
           throw error

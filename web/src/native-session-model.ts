@@ -154,7 +154,7 @@ export async function resolveNativeSessionTargetModel(
       target.sessionID,
       target.directory,
       undefined,
-      20,
+      200,
       false
     )
     let model = page.model ?? (target.backend === "opencode" ? lastNativeMessageModel(page.messages) : null)

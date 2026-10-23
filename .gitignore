@@ -15,3 +15,9 @@ web/release-*/
 
 # The bridge has no dependencies; CI runs its tests without installing any.
 bridge/package-lock.json
+
+# Local fork build inputs and immutable output artifacts.
+node_modules
+release/
+.vendor-cache/
+__pycache__/

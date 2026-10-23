@@ -2,7 +2,18 @@ const ownedChildren = new Set()
 const closePromises = new WeakMap()
 const finishedChildren = new WeakSet()
 const failedSpawns = new WeakSet()
+const ownedGroups = new WeakSet()
 let exitHookInstalled = false
+
+function signalOwned(child, signal) {
+  if (ownedGroups.has(child) && Number.isInteger(child.pid) && child.pid > 1) {
+    try { process.kill(-child.pid, signal); return } catch (error) {
+      if (error?.code === "ESRCH") return
+      throw error
+    }
+  }
+  child.kill(signal)
+}
 
 function exited(child) {
   return child.exitCode !== null && child.exitCode !== undefined
@@ -22,7 +33,7 @@ function installExitHook() {
     for (const child of ownedChildren) {
       if (exited(child)) continue
       try {
-        child.kill("SIGKILL")
+        signalOwned(child, "SIGKILL")
       } catch {
         // Process exit is the last-resort cleanup path; there is no recovery work to do here.
       }
@@ -31,12 +42,19 @@ function installExitHook() {
 }
 
 /** Track a child started by this process so shutdown can reap it even if its owner is abandoned. */
-export function ownChildProcess(child) {
+export function ownChildProcess(child, { processGroup = false } = {}) {
   if (!child || typeof child.kill !== "function") throw new TypeError("A child process is required")
   if (exited(child)) return child
   installExitHook()
+  // The caller must have spawned this exact native child with detached:true on POSIX.
+  if (processGroup && process.platform !== "win32") ownedGroups.add(child)
   ownedChildren.add(child)
   child.once("exit", () => {
+    // The wrapper may exit before its native app-server/MCP descendants. Only signal a group
+    // explicitly created for this child; never infer ownership from a PID or kill by process name.
+    if (ownedGroups.has(child)) {
+      try { signalOwned(child, "SIGKILL") } catch { /* Already gone or inaccessible. */ }
+    }
     finishedChildren.add(child)
     drop(child)
   })
@@ -91,7 +109,7 @@ export function closeOwnedChildProcess(child, { graceMs = 1_000 } = {}) {
     child.once("close", finish)
     child.once("error", onError)
     try {
-      child.kill("SIGTERM")
+      signalOwned(child, "SIGTERM")
     } catch {
       // A failed signal can happen in the narrow race with natural exit; the timer still forces
       // the last-resort signal if Node has not reported that exit yet.
@@ -100,7 +118,7 @@ export function closeOwnedChildProcess(child, { graceMs = 1_000 } = {}) {
       killTimer = setTimeout(() => {
         if (settled) return
         try {
-          child.kill("SIGKILL")
+          signalOwned(child, "SIGKILL")
         } catch {
           // Keep waiting for the exit event; callers need the observed lifecycle boundary.
         }

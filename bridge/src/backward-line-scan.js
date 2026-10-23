@@ -1,38 +1,46 @@
-const BACKWARD_READ_BYTES = 64 * 1024
+// Assemble each record once, including records spanning many read chunks.
+const READ_BYTES = 64 * 1024;
 
-/**
- * Yield the lines of an open file handle newest-first without loading it, in backward 64k
- * chunks. Each yield is `{ line, offset, chunkEnd }`: the raw line bytes (no trailing `\n`),
- * the byte offset the line starts at, and the end offset of the chunk being scanned (the
- * cursor value the chunk was read back from, for callers whose stop condition depends on
- * how far back the scan has reached). Breaking out of the loop stops the scan; the caller
- * keeps owning the handle.
- */
-export async function* scanLinesBackward(handle, { from }) {
-  let cursor = from
-  let carry = Buffer.alloc(0)
+export async function* scanLinesBackward(handle, { from, budget }) {
+  let cursor = from;
+  let fragments = [];
+  let carriedBytes = 0;
+
+  function assemble(fragment) {
+    if (carriedBytes === 0) return fragment;
+    return Buffer.concat([fragment, ...fragments.slice().reverse()], fragment.length + carriedBytes);
+  }
+
   while (cursor > 0) {
-    const start = Math.max(0, cursor - BACKWARD_READ_BYTES)
-    const chunk = Buffer.allocUnsafe(cursor - start)
-    const { bytesRead } = await handle.read(chunk, 0, chunk.length, start)
-    const data = carry.length > 0
-      ? Buffer.concat([chunk.subarray(0, bytesRead), carry])
-      : chunk.subarray(0, bytesRead)
-
-    let lineEnd = data.length
-    for (let index = data.length - 1; index >= 0; index -= 1) {
-      if (data[index] !== 0x0a) continue
-      const lineStart = index + 1
-      if (lineStart < lineEnd) yield { line: data.subarray(lineStart, lineEnd), offset: start + lineStart, chunkEnd: cursor }
-      lineEnd = index
+    const start = Math.max(0, cursor - READ_BYTES);
+    const chunk = Buffer.allocUnsafe(cursor - start);
+    const { bytesRead } = await handle.read(chunk, 0, chunk.length, start);
+    budget?.read(bytesRead);
+    const data = chunk.subarray(0, bytesRead);
+    let lineEnd = data.length;
+    for (let index = data.length - 1; index >= 0; index--) {
+      if (data[index] !== 0x0a) continue;
+      const fragment = data.subarray(index + 1, lineEnd);
+      budget?.line(fragment.length + carriedBytes);
+      if (fragment.length + carriedBytes > 0) {
+        yield { line: assemble(fragment), offset: start + index + 1, chunkEnd: cursor };
+      }
+      fragments = [];
+      carriedBytes = 0;
+      lineEnd = index;
     }
-
     if (start === 0) {
-      if (lineEnd > 0) yield { line: data.subarray(0, lineEnd), offset: 0, chunkEnd: cursor }
-      cursor = 0
-    } else {
-      carry = lineEnd > 0 ? Buffer.from(data.subarray(0, lineEnd)) : Buffer.alloc(0)
-      cursor = start
+      const fragment = data.subarray(0, lineEnd);
+      budget?.line(fragment.length + carriedBytes);
+      if (fragment.length + carriedBytes > 0) {
+        yield { line: assemble(fragment), offset: 0, chunkEnd: cursor };
+      }
+    } else if (lineEnd > 0) {
+      const fragment = data.subarray(0, lineEnd);
+      fragments.push(fragment);
+      carriedBytes += fragment.length;
+      budget?.line(carriedBytes);
     }
+    cursor = start;
   }
 }

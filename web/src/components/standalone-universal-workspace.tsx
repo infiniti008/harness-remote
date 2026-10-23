@@ -1376,7 +1376,7 @@ function NativeSessionsWorkspace({
           ) : machines.length === 0 ? (
             <div className="hr-native-workspace-empty hr-native-startup">
               <ServerIcon size={28} />
-              <span>Harness Remote 3.0</span>
+              <span>Harness Remote {import.meta.env.VITE_HARNESS_VERSION}</span>
               <strong>{t("sf.addFirstMachine")}</strong>
               <p>{t("sf.addFirstMachineBody")}</p>
               <button type="button" className="tdw-button primary" onClick={onManageMachines}><ServerIcon size={15} /> {t("sf.addMachine")}</button>
@@ -1412,7 +1412,7 @@ function NativeSessionsWorkspace({
           ) : (
             <div className="hr-native-workspace-empty hr-native-startup ready">
               <ChatIcon size={28} />
-              <span>Harness Remote 3.0</span>
+              <span>Harness Remote {import.meta.env.VITE_HARNESS_VERSION}</span>
               <strong>{t("sf.openNativeSession")}</strong>
               <p>{t("sf.openNativeSessionBody")}</p>
               <div className="hr-native-startup-facts"><span>{t("sf.onlineCount", { count: onlineCount })}</span>{offlineCount ? <span>{t("sf.offlineCount", { count: offlineCount })}</span> : null}<span>{t("sf.nativeSessionTruth")}</span></div>

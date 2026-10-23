@@ -1,0 +1,39 @@
+name: Validate local candidate
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    env:
+      NODE_OPTIONS: --max-old-space-size=384 --v8-pool-size=1
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.21.0'
+      - name: Install pinned bridge dependencies
+        run: npm ci --ignore-scripts
+      - name: Test bridge sequentially
+        run: env -u CODEX_PATH node --test --test-concurrency=1 bridge/test/*.test.js
+      - name: Install web dependencies without desktop installation scripts
+        run: npm ci --ignore-scripts
+        working-directory: web
+      - name: Type-check and build web
+        run: npm run build
+        working-directory: web
+      - name: Verify cache and session behavior
+        run: node scripts/run-vite-test.mjs src/idle-feed-cache.test.mjs src/message-page-transport.test.mjs src/taskdesk-conversation-loading.test.mjs src/native-session-opening.test.mjs src/native-session-model-recovery.test.mjs src/native-session-model-lifecycle.test.mjs src/native-session-queued-prompt.test.mjs src/shared-browser-event-stream.test.mjs
+        working-directory: web
+      - name: Assemble candidate
+        run: python3 distribution/build-release.py
+      - uses: actions/upload-artifact@v7
+        with:
+          name: harness-local-candidate
+          path: release/*/*
+          if-no-files-found: error

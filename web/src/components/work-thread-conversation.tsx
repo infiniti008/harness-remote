@@ -13,11 +13,11 @@ import { nativeSessionIsWorking } from "../native-session-v3-adapter"
 import type { SavedServerProfile } from "../serverProfiles"
 import { taskClient, type AgentModelScope } from "../taskClient"
 import { startTaskDeskSessionLiveRefresh } from "../taskdesk-session-live-refresh"
+import { sessionDataScope, sessionFeedCache, type SessionFeed } from "../session-feed-cache"
 import type {
   BackendKind,
   CommandInfo,
   MachineAgentHost,
-  MessageEnvelope,
   ModelOption,
   ModelSelection,
   PermissionRequest,
@@ -63,39 +63,6 @@ type SessionTarget = {
   config: ServerConfig
 }
 
-type SessionFeed = {
-  messages: MessageEnvelope[]
-  before?: string
-  hasMore: boolean
-}
-
-// A completed Session's transcript is durable: once a turn settles the window cannot grow on its own, so
-// re-opening a surface for an idle (non-running) Session does not need to re-read its full history from the
-// network a second time. That second read buys nothing - it only causes an empty-window flash and a scroll
-// reset. This module store keeps the last fetched window per Session id so an in-app navigation away and
-// back shows the exact same transcript instantly, with no reload flash and no jump to the bottom.
-//
-// It caches only durable *transcript data* - never a projection or runtime state - so the clean-start
-// invariant (a fresh projection on every open, conversations.delete on teardown) stays completely intact. A
-// Session that is still running is never served from the cache: it is always read live, so a live turn is
-// never shown from a stale window.
-const IDLE_FEED_CACHE_LIMIT = 64
-const idleFeedCache = new Map<string, SessionFeed>()
-
-function readIdleFeedCache(sessionID: string): SessionFeed | undefined {
-  return idleFeedCache.get(sessionID)
-}
-
-// Re-insert as newest so the Session the user keeps returning to is the last one evicted.
-function upsertIdleFeedCache(sessionID: string, feed: SessionFeed): void {
-  idleFeedCache.delete(sessionID)
-  idleFeedCache.set(sessionID, feed)
-  if (idleFeedCache.size > IDLE_FEED_CACHE_LIMIT) {
-    const oldest = idleFeedCache.keys().next().value
-    if (oldest !== undefined) idleFeedCache.delete(oldest)
-  }
-}
-
 // The window a re-open of a settled Session should paint on its very first frame. It is read from the
 // idle-cache module store so a navigation away and back shows the exact same transcript *synchronously,
 // before the first commit*. Seeding in a post-commit effect instead paints an empty "Loading
@@ -107,7 +74,7 @@ function seedIdleFeeds(conversation: ConversationRuntime, baseConfig: ServerConf
   const seeded: Record<string, SessionFeed> = {}
   if (!nativeSessionIsWorking(conversation.status)) {
     for (const target of sessionTargets(conversation, baseConfig, agents)) {
-      const cached = readIdleFeedCache(target.sessionID)
+      const cached = sessionFeedCache.get(sessionDataScope(target.config, target.sessionID, target.directory))
       if (cached) seeded[target.sessionID] = cached
     }
   }
@@ -476,7 +443,7 @@ export function WorkThreadConversation({
   uncertainDeliveryRef.current = uncertainDelivery
 
   const targets = useMemo(() => sessionTargets(conversation, baseConfig, agents), [conversation.id, conversation.turns, conversation.currentTurn, conversation.directory, baseConfig, agents])
-  const targetSignature = targets.map((target) => `${target.sessionID}:${target.agentID}:${target.directory}`).join("|")
+  const targetSignature = targets.map((target) => sessionDataScope(target.config, target.sessionID, target.directory)).join("|")
   const agentsSignature = agents.map((agent) => `${agent.id}:${agent.label}:${agent.backend}`).join("|")
   const agentsByID = useMemo(() => agentMap(agents), [agentsSignature])
   const currentAgentID = agentForTurn(conversation, conversation.currentTurn)
@@ -527,8 +494,11 @@ export function WorkThreadConversation({
   // Mirror the last rendered window back to the module store so a re-open of a settled Session shows the
   // same transcript without a network reread. This runs for initial load, tail refresh, and older paging.
   useEffect(() => {
-    for (const [session, feed] of Object.entries(feeds)) upsertIdleFeedCache(session, feed)
-  }, [feeds])
+    for (const target of targets) {
+      const feed = feeds[target.sessionID]
+      if (feed) sessionFeedCache.set(sessionDataScope(target.config, target.sessionID, target.directory), feed)
+    }
+  }, [feeds, targetSignature])
   useEffect(() => { targetAgentIDRef.current = targetAgentID }, [targetAgentID])
   useEffect(() => {
     const timer = window.setTimeout(() => persistDraft(draftStorageKey, draftRef.current), DRAFT_PERSIST_DEBOUNCE_MS)
@@ -545,7 +515,7 @@ export function WorkThreadConversation({
     const seeded: Record<string, SessionFeed> = {}
     if (!nativeSessionIsWorking(conversation.status)) {
       for (const target of sessionTargets(conversation, baseConfig, agents)) {
-        const cached = readIdleFeedCache(target.sessionID)
+        const cached = sessionFeedCache.get(sessionDataScope(target.config, target.sessionID, target.directory))
         if (cached) seeded[target.sessionID] = cached
       }
     }
@@ -606,13 +576,15 @@ export function WorkThreadConversation({
 
   const loadInitialTarget = useCallback(async (target: SessionTarget): Promise<SessionFeed> => {
     const page = await controller.loadMessagePage(target.config, target.sessionID, target.directory, undefined, INITIAL_PAGE_SIZE, false)
-    return { messages: page.messages, before: page.before, hasMore: page.hasMore }
+    return { messages: page.messages, before: page.before, hasMore: page.hasMore, model: page.model }
   }, [controller])
 
   useEffect(() => {
     const generation = ++loadGeneration.current
     let cancelled = false
-    const missing = targets.filter((target) => !feedsRef.current[target.sessionID])
+    // Revalidate cached idle windows too: an external CLI/VS Code can append at any time.
+    // The API sends a lightweight revision probe when it already holds this page.
+    const missing = targets
     if (missing.length === 0) {
       setLoading(false)
       return
@@ -628,7 +600,12 @@ export function WorkThreadConversation({
       try {
         const feed = await loadInitialTarget(target)
         if (cancelled || loadGeneration.current !== generation) return
-        setFeeds((current) => current[target.sessionID] ? current : { ...current, [target.sessionID]: feed })
+        setFeeds((current) => {
+          const existing = current[target.sessionID]
+          if (!existing) return { ...current, [target.sessionID]: feed }
+          return { ...current, [target.sessionID]: { ...existing, model: feed.model,
+            messages: mergeLatestMessagePage(existing.messages, feed.messages, { complete: !feed.hasMore }) } }
+        })
       } catch (reason) {
         if (isTransportFailure(reason)) onConnectionIssueRef.current?.()
         firstFailure ??= reason instanceof Error ? reason.message : String(reason)

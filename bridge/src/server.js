@@ -1,4 +1,5 @@
 import http from "node:http"
+import { LOCAL_RELEASE_INFO } from "./local-release-info.js"
 import { readdir, realpath } from "node:fs/promises"
 import path from "node:path"
 import { selectableAcpModelValue } from "./agent-model-catalog.js"
@@ -351,6 +352,7 @@ export function createBridgeServer({ config, acp, serviceOptions, machineRegistr
         // servers still report their backend exactly as before.
         writeJSON(response, 200, {
           healthy: true,
+          ...LOCAL_RELEASE_INFO,
           ...(machineRegistry ? {} : { backend }),
           version: acp.agentInfo?.version ?? "unknown"
         })
@@ -445,11 +447,23 @@ export function createBridgeServer({ config, acp, serviceOptions, machineRegistr
             return
           }
           if (limit !== undefined || url.searchParams.has("before")) {
-            const page = await service.messagePage(sessionID, {
+            const pageOptions = {
               limit: limit ?? 100,
               before: url.searchParams.get("before") || undefined,
               refresh: url.searchParams.get("refresh") === "1"
-            })
+            }
+            const revision = await service.messagePageRevision?.(sessionID, pageOptions)
+            if (revision) response.setHeader("X-History-Revision", revision)
+            if (revision && url.searchParams.get("if_revision") === revision) {
+              response.setHeader("X-History-Not-Modified", "1")
+              writeJSON(response, 204)
+              return
+            }
+            const page = await service.messagePage(sessionID, pageOptions)
+            // A turn may start during the read. Do not mark its live stream as immutable.
+            if (revision && revision !== await service.messagePageRevision?.(sessionID, pageOptions)) {
+              response.removeHeader("X-History-Revision")
+            }
             if (page.before) response.setHeader("X-Next-Cursor", page.before)
             response.setHeader("X-Has-More", page.hasMore ? "1" : "0")
             if (page.model) response.setHeader("X-Session-Model", encodeURIComponent(JSON.stringify(page.model)))
@@ -523,7 +537,8 @@ export function createBridgeServer({ config, acp, serviceOptions, machineRegistr
       }
       writeJSON(response, 404, { error: "Not found" })
     } catch (error) {
-      writeJSON(response, 400, { error: error instanceof Error ? error.message : "Request failed" })
+      const status = [400, 413, 503].includes(error?.status) ? error.status : 400
+      writeJSON(response, status, { error: error instanceof Error ? error.message : "Request failed", ...(error?.code ? { code: error.code } : {}) })
     }
   })
   server.on("close", unsubscribeActivity)

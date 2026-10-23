@@ -1,0 +1,40 @@
+# Linux/NAS template; not an HA Supervisor app. Paths and access must be reviewed per host.
+services:
+  harness:
+    build:
+      context: ..
+      dockerfile: distribution/Dockerfile
+      args:
+        RELEASE_VERSION: 3.4.0-local.1
+    image: harness-remote-local:3.4.0-local.1
+    user: "${HARNESS_UID:-1000}:${HARNESS_GID:-1000}"
+    restart: "no"
+    cpus: 1.0
+    mem_limit: 1024m
+    memswap_limit: 1024m
+    pids_limit: 128
+    stop_grace_period: 15s
+    ports:
+      - "${HARNESS_BIND_ADDRESS:-127.0.0.1}:4902:4902"
+    environment:
+      CODEX_HOME: "${CODEX_HOME_ON_HOST:?Select the existing Linux agent home}"
+      HARNESS_REMOTE_USERNAME: "${HARNESS_REMOTE_USERNAME:?Set gateway username}"
+      HARNESS_REMOTE_PASSWORD: "${HARNESS_REMOTE_PASSWORD:?Set gateway password}"
+    volumes:
+      # Preserve absolute agent/project paths used in native SQLite and rollout metadata.
+      - "${CODEX_HOME_ON_HOST:?Select agent home}:${CODEX_HOME_ON_HOST:?Select agent home}:rw"
+      - "${PROJECT_ROOT_ON_HOST:?Select project root}:${PROJECT_ROOT_ON_HOST:?Select project root}:rw"
+      - gateway-state:/data
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "4902"
+      - --root
+      - "${PROJECT_ROOT_ON_HOST:?Select project root}"
+      - --state-dir
+      - /data/gateway-state
+      - --cors
+      - "${HARNESS_WEB_ORIGIN:?Set the web client origin}"
+volumes:
+  gateway-state:

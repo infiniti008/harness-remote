@@ -1,3 +1,6 @@
+> Local candidate based on upstream 3.4.0. See [installation and release notes](distribution/README.md).
+> The instructions below describe upstream; use the candidate launcher for this build.
+
 <div align="center">
 
 # Harness Remote

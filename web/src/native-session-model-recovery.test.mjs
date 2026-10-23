@@ -75,7 +75,7 @@ try {
     "ses-1",
     "/repo/project",
     undefined,
-    20,
+    200,
     false
   ], "model recovery must read only the exact native Session page without forcing replay")
   assert.equal(modelCalls.length, 0, "OpenCode transcript recovery must not consult a second model authority")

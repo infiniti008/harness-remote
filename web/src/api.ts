@@ -2,6 +2,8 @@ import { Capacitor, CapacitorHttp } from "@capacitor/core"
 import { desktopRequest, isDesktopPlatform } from "./desktopBridge"
 import { normalizeNativeResponseData } from "./nativeResponse"
 import { MachineHttpError } from "./machine-request-error"
+import { MessagePageCache } from "./message-page-cache"
+import { sessionDataScope } from "./session-feed-cache"
 import { streamURL } from "./opencode-events"
 import { authHeader, baseUrl, hasCredentials, isValidServerConfig, routingHeaders } from "./serverConfig"
 import type { AttachmentPart } from "./attachments"
@@ -30,6 +32,8 @@ import type {
 } from "./types"
 
 export { baseUrl, isValidServerConfig }
+
+const messagePages = new MessagePageCache()
 
 // A 401 says the server wants credentials, not that the ones given are wrong, and the app can tell
 // the two apart because it knows whether it sent any. The connection test enables itself without a
@@ -410,16 +414,18 @@ export const api = {
     const params = new URLSearchParams({ limit: String(Math.max(1, Math.min(500, Math.trunc(limit) || 100))) })
     if (before) params.set("before", before)
     if (refreshHistory) params.set("refresh", "1")
-    const response = await requestWithHeaders<MessageEnvelope[]>(
-      config,
-      withDirectory(`/session/${sessionID}/message?${params.toString()}`, directory)
-    )
-    return {
+    const key = JSON.stringify([sessionDataScope(config, sessionID, directory), params.toString()])
+    return messagePages.load(key, (revision) => {
+      const query = new URLSearchParams(params)
+      if (revision && !refreshHistory) query.set("if_revision", revision)
+      return requestWithHeaders<MessageEnvelope[]>(config,
+        withDirectory(`/session/${sessionID}/message?${query.toString()}`, directory))
+    }, (response) => ({
       messages: response.data,
       before: response.headers["x-next-cursor"] || undefined,
       hasMore: response.headers["x-has-more"] === "1",
       model: sessionModelHeader(response.headers["x-session-model"])
-    }
+    }))
   },
 
   async loadMessages(config: ServerConfig, sessionID: string, directory?: string, refreshHistory = false) {

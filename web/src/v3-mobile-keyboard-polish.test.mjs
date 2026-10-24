@@ -70,7 +70,7 @@ test("a detected harness reads consistently in the mobile machine list", () => {
 })
 
 test("a phone can explicitly refresh its machines and Sessions", () => {
-  assert.match(standalone, /className="tdw-icon-button hr-refresh-button"/)
+  assert.match(standalone, /className="hr-menu-action hr-refresh-button"/)
   assert.match(standalone, /aria-busy=\{toolbarRefreshing \|\| undefined\}/)
   assert.match(standalone, /setRevision\(\(value\) => value \+ 1\)/)
   assert.match(parity, /\.hr-control-plane \.tdw-top-actions > \.hr-refresh-button \{[^}]*display: flex !important;/)

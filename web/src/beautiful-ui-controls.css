@@ -482,7 +482,7 @@
 }
 
 .tdw-work-thread-conversation .uw-composer-attachment {
-  padding: 4px 5px 4px 9px;
+  padding: 1px 5px 1px 9px;
   border-radius: 999px;
   border: 1px solid var(--td3-border);
   background: var(--td3-raise-2);

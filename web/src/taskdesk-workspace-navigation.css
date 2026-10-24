@@ -7,6 +7,15 @@
   outline: none; border-color: var(--td3-focus) !important; box-shadow: 0 0 0 3px var(--td3-blue-soft) !important;
 }
 
+/* The composer draws focus on its rounded shell. Override the general keyboard ring on the
+   textarea itself so keyboard focus keeps the shell ring without adding a second rectangle. */
+.tdw-shell .tdw-work-thread-conversation .uw-composer-shell textarea:focus,
+.tdw-shell .tdw-work-thread-conversation .uw-composer-shell textarea:focus-visible {
+  outline: none !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
 /* Machines exposes the live harness inventory returned by the daemon. A configured ACP host is
    ready to use but intentionally starts lazily, so both configured (Ready) and available
    (Running) use the healthy green affordance. Yellow is reserved for machine/task transitions,

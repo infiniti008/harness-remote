@@ -400,6 +400,10 @@ const ConversationTranscript = memo(function ConversationTranscript({
     const restore = restoreScrollRef.current
     const transcript = transcriptRef.current
     if ((!restore && !returningToView) || !transcript || preservingOlderRef.current || loading || !ready) return
+    // Runtime enrichment can commit a ready but empty timeline before the native page/turn
+    // boundaries arrive. Do not consume activation on that placeholder; settle the actual content
+    // in its layout effect, before it can paint at the top.
+    if (!messages.length) return
     previousViewRevisionRef.current = surfaceViewRevision
     restoredRef.current = true
     if (returningToView) {
@@ -420,12 +424,12 @@ const ConversationTranscript = memo(function ConversationTranscript({
       // there too. A shorter window instead pushes the reader up to the top, which still reads as "up".
       const offsetFromBottom = Math.max(0, restore.scrollHeight - restore.scrollTop - restore.clientHeight)
       const target = Math.max(0, bottom - offsetFromBottom)
-      current.scrollTop = target
+      current.scrollTo({ top: target, behavior: "instant" })
       nearBottomRef.current = target >= bottom - NEAR_BOTTOM_PX ? restore.nearBottom : false
       refreshJumpAffordances(current)
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [loading, ready, surfaceViewRevision])
+  }, [messages, loading, ready, surfaceViewRevision])
 
   liveRef.current = sending || waiting
 

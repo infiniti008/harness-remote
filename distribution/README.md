@@ -155,3 +155,13 @@ adds explicit queue promotion/editing and account limits, fixes overlay/focus/ac
 and fails the isolated service on unexpected adapter/native death. Keep the same resource bounds
 and restart=no. Kernel sandbox, large native resume, container teardown and physical phone gates
 remain required before any working/HA deployment.
+
+## Lab polish candidate 3.5.0-local.5
+
+See `docs/LOCAL_5_RETEST.md` for the isolated upgrade and `docs/LOCAL_5_VALIDATION.md` for scope and
+evidence. The full app's focus/attachment cascade and mobile menu geometry are corrected; cached
+native opens prepare turn boundaries before rendering their first history window. The current
+lifecycle test uses shell builtin signals. The bounded offline native probe adds phase/resource
+diagnostics, a smaller finalized-message stream and persistent, allowlisted failure artifacts.
+All local.4 runtime policy, queue and Stop fixes remain. Do not raise the existing limits or deploy
+to working Harness/HA: large native resume, target-host sandbox and physical-device gates remain.

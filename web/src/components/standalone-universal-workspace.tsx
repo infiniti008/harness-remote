@@ -15,7 +15,7 @@ import {
   persistThemePreference,
   type ThemePreference
 } from "../appPreferences"
-import { ChatIcon, LoadingIcon, RefreshIcon, ServerIcon, SettingsIcon } from "../Icons"
+import { ChatIcon, LoadingIcon, RefreshIcon, SearchIcon, ServerIcon, SettingsIcon } from "../Icons"
 import { createTranslator, languageOptions, type LanguageCode, type Translator } from "../i18n"
 import { chooseDesktopProjectFolder, desktopNetworkSettings, desktopProjectRoots, setDesktopNetworkSettings, setDesktopProjectRoots } from "../desktopBridge"
 import {
@@ -1209,33 +1209,43 @@ function NativeSessionsWorkspace({
       <header className="tdw-topbar hr-topbar">
         <div className="tdw-brand hr-brand"><img className="tdw-logo hr-logo hr-app-icon" src={`${import.meta.env.BASE_URL}icon-192.png`} alt="" width={32} height={32} /><div><strong>Harness Remote</strong><small>{t("sf.brandTagline")}</small></div></div>
         <CompactMenu label={t("sf.workspaceContext")} closeOnAction>
-          <div className="tdw-context-path" aria-label={t("sf.workspaceContext")}>
-            <span>{selectedMachine?.name || t("sf.allMachines")}</span><b>/</b>
-            <strong>{selectedProject || t("sf.nativeSessions")}</strong>
-            {selected ? <><b>/</b><em>{selected.title}</em></> : null}
+          <div className="hr-menu-context">
+            <div className="tdw-context-path" aria-label={t("sf.workspaceContext")}>
+              <span>{selectedMachine?.name || t("sf.allMachines")}</span><b>/</b>
+              <strong>{selectedProject || t("sf.nativeSessions")}</strong>
+              {selected ? <><b>/</b><em>{selected.title}</em></> : null}
+            </div>
+            <div className="hr-menu-status">
+              <span className="tdw-machine-health" aria-label={t("sf.machineCount", { online: onlineCount, total: machines.length })}>
+                <i className={startupPhase === "ready" ? onlineCount > 0 ? "online" : "offline" : "pending"} aria-hidden="true" />
+                {t("sf.machineCount", { online: onlineCount, total: machines.length })}
+              </span>
+            </div>
           </div>
           <div className="tdw-top-actions">
-            <span className="tdw-machine-health" aria-label={t("sf.machineCount", { online: onlineCount, total: machines.length })}>
-              <i className={startupPhase === "ready" ? onlineCount > 0 ? "online" : "offline" : "pending"} aria-hidden="true" />
-              {t("sf.machineCount", { online: onlineCount, total: machines.length })}
-            </span>
-            <button type="button" className="tdw-button secondary tdw-machines-button" onClick={onManageMachines}><ServerIcon size={15} /> {t("sf.machines")}</button>
-            <button type="button" className="palette-hint" onClick={() => setPaletteOpen(true)} title={t("command.commandPalette")} aria-label={t("command.commandPalette")}><span>{t("command.commandPalette")}</span><kbd>⌘K</kbd></button>
+            <button type="button" className="hr-menu-action" onClick={onManageMachines}>
+              <span className="hr-menu-action-icon" aria-hidden="true"><ServerIcon size={16} /></span><span className="hr-menu-action-label">{t("sf.machines")}</span><kbd aria-hidden="true"></kbd>
+            </button>
+            <button type="button" className="hr-menu-action" onClick={() => setPaletteOpen(true)} title={t("command.commandPalette")} aria-label={t("command.commandPalette")}>
+              <span className="hr-menu-action-icon" aria-hidden="true"><SearchIcon size={16} /></span><span className="hr-menu-action-label">{t("command.commandPalette")}</span><kbd>⌘K</kbd>
+            </button>
             {selected ? (
               <button
                 type="button"
-                className="tdw-icon-button hr-session-focus-toggle"
+                className="hr-menu-action hr-session-focus-toggle"
                 onClick={toggleSessionFocusMode}
                 title={sessionFocusMode ? t("sf.showSessionControls") : t("sf.hideSessionControls")}
                 aria-label={sessionFocusMode ? t("sf.showSessionControls") : t("sf.hideSessionControls")}
                 aria-pressed={sessionFocusMode}
               >
-                <ChatIcon size={16} />
+                <span className="hr-menu-action-icon" aria-hidden="true"><ChatIcon size={16} /></span><span className="hr-menu-action-label">{sessionFocusMode ? t("sf.showSessionControls") : t("sf.hideSessionControls")}</span><kbd aria-hidden="true"></kbd>
               </button>
             ) : null}
-            <button type="button" className="tdw-icon-button" onClick={onManageSettings} title={t("nav.settings")} aria-label={t("nav.settings")}><SettingsIcon size={16} /></button>
-            <button type="button" className="tdw-icon-button hr-refresh-button" onClick={() => requestRefresh("toolbar")} title={toolbarRefreshing ? t("sf.refreshingMachines") : t("sf.refresh")} aria-label={toolbarRefreshing ? t("sf.refreshingMachines") : t("sf.refresh")} aria-busy={toolbarRefreshing || undefined} disabled={workspaceRefreshing}>
-              {toolbarRefreshing ? <LoadingIcon size={16} /> : <RefreshIcon size={16} />}
+            <button type="button" className="hr-menu-action" onClick={onManageSettings} title={t("nav.settings")} aria-label={t("nav.settings")}>
+              <span className="hr-menu-action-icon" aria-hidden="true"><SettingsIcon size={16} /></span><span className="hr-menu-action-label">{t("nav.settings")}</span><kbd aria-hidden="true"></kbd>
+            </button>
+            <button type="button" className="hr-menu-action hr-refresh-button" onClick={() => requestRefresh("toolbar")} title={toolbarRefreshing ? t("sf.refreshingMachines") : t("sf.refresh")} aria-label={toolbarRefreshing ? t("sf.refreshingMachines") : t("sf.refresh")} aria-busy={toolbarRefreshing || undefined} disabled={workspaceRefreshing}>
+              <span className="hr-menu-action-icon" aria-hidden="true">{toolbarRefreshing ? <LoadingIcon size={16} /> : <RefreshIcon size={16} />}</span><span className="hr-menu-action-label">{toolbarRefreshing ? t("sf.refreshingMachines") : t("sf.refresh")}</span><kbd aria-hidden="true"></kbd>
             </button>
           </div>
         </CompactMenu>

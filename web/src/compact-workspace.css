@@ -34,44 +34,90 @@
 .hr-compact-menu-panel {
   position: absolute;
   z-index: 200;
-  top: calc(100% + 8px);
+  top: calc(100% + 6px);
   right: 0;
-  width: min(300px, calc(100vw - 24px));
-  max-height: min(560px, 75dvh);
+  width: min(320px, calc(100vw - 16px), calc(var(--hrsf-rail-width) - 16px));
+  max-height: max(120px, min(560px, calc(100dvh - 68px)));
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 8px;
   border: 1px solid var(--td3-border);
-  border-radius: 14px;
+  border-radius: 12px;
   color: var(--td3-text);
   background: var(--td3-panel-2);
   box-shadow: var(--td3-shadow-panel);
 }
-.hr-native-workspace .hr-topbar .tdw-top-actions { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
-.hr-native-workspace .hr-topbar .tdw-top-actions > button {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  width: 100%;
-  min-height: 38px;
-  padding: 8px 10px;
-  border: 0;
-  border-radius: 8px;
-  text-align: left;
-  background: transparent;
+.hr-native-workspace .hr-topbar .hr-menu-context {
+  display: grid;
+  gap: 7px;
+  padding: 5px 7px 9px;
+  margin-bottom: 5px;
+  border-bottom: 1px solid var(--td3-border-soft);
 }
-.hr-native-workspace .hr-topbar .tdw-top-actions > button:hover { background: var(--td3-raise-2); }
 .hr-native-workspace .hr-topbar .tdw-context-path {
   display: flex;
-  flex-wrap: wrap;
-  padding: 8px;
-  margin-bottom: 6px;
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+  padding: 0;
+  margin: 0;
   max-width: 100%;
   font-size: 11px;
-  overflow-wrap: anywhere;
 }
-.hr-native-workspace .hr-topbar .tdw-machine-health { padding: 5px 10px; font-size: 11px; }
+.hr-native-workspace .hr-topbar .tdw-context-path span,
+.hr-native-workspace .hr-topbar .tdw-context-path strong,
+.hr-native-workspace .hr-topbar .tdw-context-path em {
+  flex: 1 1 0;
+  max-width: none;
+}
+.hr-native-workspace .hr-topbar .tdw-context-path strong { flex-grow: 1.15; }
+.hr-native-workspace .hr-topbar .hr-menu-status {
+  display: flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--td3-border-soft);
+  border-radius: 7px;
+  background: var(--td3-raise-1);
+}
+.hr-native-workspace .hr-topbar .tdw-machine-health { padding: 0; font-size: 10px; }
+.hr-native-workspace .hr-topbar .tdw-top-actions { display: flex; flex-direction: column; align-items: stretch; justify-self: stretch; width: 100%; gap: 2px; }
+.hr-native-workspace .hr-topbar .tdw-top-actions > :is(.hr-menu-action, .hr-session-focus-toggle) {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  width: 100%;
+  height: auto;
+  min-height: 38px;
+  gap: 9px;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--td3-text-2);
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+.hr-native-workspace .hr-topbar .tdw-top-actions > :is(.hr-menu-action, .hr-session-focus-toggle):hover:not(:disabled),
+.hr-native-workspace .hr-topbar .tdw-top-actions > :is(.hr-menu-action, .hr-session-focus-toggle):focus-visible { color: var(--td3-text); background: var(--td3-raise-2); }
+.hr-native-workspace .hr-topbar .tdw-top-actions > :is(.hr-menu-action, .hr-session-focus-toggle):disabled { opacity: .55; cursor: wait; }
+.hr-menu-action-icon { display: grid; place-items: center; width: 20px; height: 20px; color: var(--td3-text-3); }
+.hr-menu-action-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.hr-native-workspace .hr-topbar .hr-menu-action kbd {
+  min-width: 34px;
+  padding: 2px 5px;
+  border: 1px solid var(--td3-border-soft);
+  border-radius: 5px;
+  color: var(--td3-muted);
+  background: var(--td3-raise-1);
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.2;
+  text-align: center;
+}
+.hr-native-workspace .hr-topbar .hr-menu-action kbd:empty { visibility: hidden; }
 .hr-native-workspace .hr-topbar .tdw-icon-button::after { content: attr(aria-label); font-size: 12px; margin-inline-start: 8px; }
 .hr-native-workspace .hr-topbar .hr-compact-menu > .tdw-icon-button::after { content: none; }
+.hr-native-workspace .hr-topbar .tdw-top-actions > .hr-session-focus-toggle::after { content: none; }
 .hr-native-workspace .hr-session-info { display: grid; gap: 9px; padding: 6px; font-size: 12px; }
 .hr-native-workspace .hr-session-info small { display: block; }
 .hr-native-workspace .hr-session-info code { display: block; overflow-wrap: anywhere; white-space: normal; font-size: 10px; }
@@ -178,6 +224,33 @@
 
 @media (max-width: 780px), (pointer: coarse) and (min-width: 600px) and (max-height: 640px) {
   .hr-native-workspace .hr-topbar { width: 100%; }
+  .hr-native-workspace .hr-topbar .hr-compact-menu-panel { width: min(320px, calc(100vw - 16px)); }
+  /* The global mobile shell hides context/status and icon buttons because their desktop controls
+     move to the bottom navigation. Inside this disclosure they are menu content, so restore them
+     and restore the menu's grid after the global mobile button sizing rules. */
+  .hr-native-workspace .hr-topbar .hr-compact-menu-panel .tdw-context-path,
+  .hr-native-workspace .hr-topbar .hr-compact-menu-panel .hr-menu-status .tdw-machine-health {
+    display: flex !important;
+  }
+  .hr-native-workspace .hr-topbar .hr-compact-menu-panel .tdw-context-path em { display: block !important; }
+  .hr-native-workspace .hr-topbar .hr-compact-menu-panel .tdw-top-actions {
+    gap: 2px !important;
+    min-width: 0 !important;
+  }
+  .hr-native-workspace .hr-topbar .hr-compact-menu-panel .tdw-top-actions > :is(.hr-menu-action, .hr-session-focus-toggle) {
+    display: grid !important;
+    grid-template-columns: 20px minmax(0, 1fr) auto !important;
+    align-items: center !important;
+    justify-content: initial !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    height: auto !important;
+    min-height: 38px !important;
+    padding: 6px 9px !important;
+    flex: none !important;
+  }
+  .hr-native-workspace .hr-topbar .hr-compact-menu-panel .hr-menu-action-label { display: block !important; }
   .hr-native-workspace .hr-native-workspace-session-header { padding: max(6px, env(safe-area-inset-top)) 8px 6px 47px; min-height: 50px; }
   .hr-native-workspace .hr-native-session-heading > .hr-native-session-title { min-height: 36px; display: flex; align-items: center; font-size: 15px; }
   .hr-native-workspace .hr-native-session-title:not(.editing) .hr-native-session-title-button { min-height: 36px; }

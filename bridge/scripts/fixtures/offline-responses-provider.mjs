@@ -2,7 +2,9 @@ import http from "node:http"
 import { once } from "node:events"
 
 /** Only serves local synthetic Responses streams; no HTTP client or credentials exist here. */
-export async function startOfflineResponsesProvider({ items, userMarker, assistantMarker, toolCommands = [], onRequest = () => {} }) {
+export async function startOfflineResponsesProvider({ items, userMarker, assistantMarker, toolCommands = [], onRequest = () => {}, messageStream = "completed" }) {
+  if (!Number.isInteger(items) || items < 1 || items > 40000) throw new Error("Invalid bounded offline item count")
+  if (!["completed", "deltas"].includes(messageStream)) throw new Error("Invalid offline message stream")
   const requests = []
   const server = http.createServer(async (request, response) => {
     try {
@@ -23,12 +25,25 @@ export async function startOfflineResponsesProvider({ items, userMarker, assista
       const sequence = requests.length + 1
       const toolOutputs = (Array.isArray(body.input) ? body.input : []).filter((item) => item.type === "function_call_output")
         .map((item) => JSON.stringify(item.output).slice(0, 4096))
-      const summary = { sequence, bytes: length, userMarker: raw.includes(userMarker), assistantMarker: raw.includes(assistantMarker), toolOutputs }
+      const summary = { sequence, bytes: length, userMarker: raw.includes(userMarker), assistantMarker: raw.includes(assistantMarker), toolOutputs, emittedItems: 0, emittedEvents: 0, emittedBytes: 0, backpressureWaits: 0, elapsedMs: 0, completed: false }
+      const started = Date.now()
       requests.push(summary)
       onRequest(summary)
       response.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" })
       const emit = async (event) => {
-        if (!response.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)) await once(response, "drain")
+        const encoded = `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`
+        summary.emittedEvents++
+        summary.emittedBytes += Buffer.byteLength(encoded)
+        summary.elapsedMs = Date.now() - started
+        if (!response.write(encoded)) {
+          summary.backpressureWaits++
+          await new Promise((resolve, reject) => {
+            const cleanup = () => { response.off("drain", drained); response.off("close", closed) }
+            const drained = () => { cleanup(); resolve() }
+            const closed = () => { cleanup(); reject(new Error("Offline response closed during backpressure")) }
+            response.once("drain", drained); response.once("close", closed)
+          })
+        }
       }
       const responseID = `resp_offline_${sequence}`
       await emit({ type: "response.created", response: { id: responseID, object: "response", created_at: 1, status: "in_progress", output: [] } })
@@ -51,14 +66,22 @@ export async function startOfflineResponsesProvider({ items, userMarker, assista
         const phase = index === count - 1 ? "final_answer" : "commentary"
         const part = { type: "output_text", text, annotations: [] }
         const item = { id, type: "message", role: "assistant", status: "completed", phase, content: [part] }
-        await emit({ type: "response.output_item.added", response_id: responseID, output_index: index, item: { ...item, status: "in_progress", content: [] } })
-        await emit({ type: "response.content_part.added", item_id: id, output_index: index, content_index: 0, part: { ...part, text: "" } })
-        await emit({ type: "response.output_text.delta", item_id: id, output_index: index, content_index: 0, delta: text })
-        await emit({ type: "response.output_text.done", item_id: id, output_index: index, content_index: 0, text })
-        await emit({ type: "response.content_part.done", item_id: id, output_index: index, content_index: 0, part })
+        // This fixture tests persisted native context, not token rendering. A finalized item
+        // contains the complete text; avoid five redundant streaming events per display row.
+        // Keep the delta form selectable for protocol regression comparisons.
+        if (messageStream === "deltas") {
+          await emit({ type: "response.output_item.added", response_id: responseID, output_index: index, item: { ...item, status: "in_progress", content: [] } })
+          await emit({ type: "response.content_part.added", item_id: id, output_index: index, content_index: 0, part: { ...part, text: "" } })
+          await emit({ type: "response.output_text.delta", item_id: id, output_index: index, content_index: 0, delta: text })
+          await emit({ type: "response.output_text.done", item_id: id, output_index: index, content_index: 0, text })
+          await emit({ type: "response.content_part.done", item_id: id, output_index: index, content_index: 0, part })
+        }
         await emit({ type: "response.output_item.done", output_index: index, item })
+        summary.emittedItems++
       }
       await emit({ type: "response.completed", response: { id: responseID, object: "response", created_at: 1, status: "completed", output: [], usage: { input_tokens: 1, output_tokens: count, total_tokens: count + 1, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } } } })
+      summary.completed = true
+      summary.elapsedMs = Date.now() - started
       response.end()
     } catch (error) {
       requests.push({ error: error.message })
@@ -83,6 +106,13 @@ approval_policy = "never"
 approvals_reviewer = "user"
 sandbox_mode = "workspace-write"
 web_search = "disabled"
+[features]
+plugins = false
+remote_plugin = false
+apps = false
+skill_search = false
+skip_host_skill_discovery = true
+shell_snapshot = false
 [model_providers.offline_fixture]
 name = "Offline fixture"
 base_url = ${JSON.stringify(baseURL)}

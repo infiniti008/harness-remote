@@ -14,6 +14,7 @@ import type { ConversationContinueInput, ConversationController } from "./conver
 import type { ConversationRuntime, ConversationTurn } from "./conversation-runtime"
 import type { MessageEnvelope, ModelSelection, ServerConfig } from "./types"
 import { messageText } from "./message-content"
+import { sessionDataScope, sessionFeedCache } from "./session-feed-cache"
 
 // Keep the value stable so drafts/local UI identity survive the architecture migration.
 const NATIVE_CONVERSATION_ID_PREFIX = "native-session-v3:"
@@ -1056,6 +1057,19 @@ export function registerNativeSessionV3Adapter(
       transcriptListeners: new Set()
     }
     conversations.set(id, entry)
+    // Seed turn boundaries from the same bounded idle window the renderer reuses. Without this,
+    // the freshly registered runtime has only an empty anchor dated "now"; timeline construction
+    // drops the older cached messages until the network revalidation discovers their real turns.
+    // That empty commit consumed the transcript's initial scroll before there was any content.
+    // This is presentation-only: the first authoritative read still discovers all native turns.
+    if (!nativeSessionIsWorking(entry.statusType)) {
+      const cached = sessionFeedCache.get(sessionDataScope(target.config, target.sessionID, target.directory))
+      if (cached) {
+        captureUserTurns(entry, cached)
+        reconcileNativeSessionModel(entry, cached)
+        entry.initialPageCaptured = false
+      }
+    }
   } else {
     entry.target = target
     entry.statusType = target.status?.type || entry.statusType

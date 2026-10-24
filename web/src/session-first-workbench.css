@@ -2293,7 +2293,8 @@
   min-height: 0;
   flex: 1;
   overflow-y: auto;
-  scroll-behavior: smooth;
+  /* Programmatic restore/follow must never inherit animation. Jump buttons explicitly opt in. */
+  scroll-behavior: auto;
 }
 
 .uw-message {

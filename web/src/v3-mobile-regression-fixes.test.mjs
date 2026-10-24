@@ -51,7 +51,7 @@ assert.match(workbench, /\.hr-native-workspace-detail\.mobile-open/)
 
 // Machine management and model selection remain usable as full touch surfaces.
 assert.match(workspace, /className="uw-machine-manager"/)
-assert.match(workspace, /className="tdw-icon-button hr-refresh-button"/)
+assert.match(workspace, /className="hr-menu-action hr-refresh-button"/)
 assert.match(workbench, /\.hr-native-session-observer \.uw-composer-shell textarea \{[\s\S]*font-size: 16px !important/)
 assert.match(workbench, /\.hr-session-actions > \.tdw-icon-button \{ width: 44px; height: 44px; \}/)
 

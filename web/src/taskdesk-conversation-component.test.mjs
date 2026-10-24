@@ -133,7 +133,7 @@ test("a live turn keeps its tail halfway up the transcript, after a Send or on o
 
 test("Session outcomes share compact composer status on desktop and phone", () => {
   assert.match(controller, /toolbarAccessory\?: ReactNode/)
-  assert.match(controller, /\{toolbarAccessory\}\s+<ConversationStatePill/)
+  assert.match(controller, /composerStatus=\{<>[\s\S]*\{toolbarAccessory\}[\s\S]*<CodexRateLimitsStatus[\s\S]*<ConversationStatePill/)
   assert.match(controller, /composerStatus=\{<>/)
   assert.match(observer, /toolbarAccessory=\{outcomePanel\}/)
 })

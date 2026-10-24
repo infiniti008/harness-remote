@@ -45,7 +45,9 @@ if (args.includes("--version")) {
     // The candidate never approves an ACP sandbox escalation automatically. A denied bwrap
     // operation must remain denied, even when an adapter offers an allow_once permission.
     process.env.HARNESS_REMOTE_PERMISSION_MODE = "deny"
-    process.env.HARNESS_REMOTE_ACP_ARGS = JSON.stringify(["--v8-pool-size=1", "--max-old-space-size=96", adapter])
+    process.env.HARNESS_REMOTE_EXIT_ON_ADAPTER_FAILURE = "1"
+    const adapterEntry = fileURLToPath(new URL("bridge/src/codex-adapter-entry.js", root))
+    process.env.HARNESS_REMOTE_ACP_ARGS = JSON.stringify(["--v8-pool-size=1", "--max-old-space-size=96", adapterEntry, adapter])
     const daemon = fileURLToPath(new URL("bridge/src/daemon-cli.js", root))
     process.argv = [process.execPath, daemon, "--backend", "codex", "--no-opencode", "--acp-command", process.execPath, ...args]
     // Run in this process: no npm/shell wrapper sits between the service manager and Harness.

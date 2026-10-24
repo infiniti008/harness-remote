@@ -584,6 +584,7 @@ export class AcpService {
   #deletedSessionIndexLoaded = false
   #deletedSessionIndexWrite = Promise.resolve()
   #queues = new Map()
+  #queueDrains = new Set()
   #active = new Set()
   #listeners = new Set()
   #turnGenerations = new Map()
@@ -1559,21 +1560,30 @@ export class AcpService {
   }
 
   /**
-   * ACP accepts one turn per session at a time, so a prompt sent while the agent is still working
-   * follows the harness's mid-turn policy: Codex forwards it into the live turn, where its official
-   * adapter documents the injection, while every other harness queues it. It is recorded straight
-   * away in every case; a queued prompt carries `info.queued` until it starts.
+   * ACP accepts one turn per session at a time. New messages queue by default, even when the
+   * harness supports live steering. Only an explicit steer request or queue promotion supplements
+   * the running turn. A queued prompt carries `info.queued` until it actually starts.
    *
    * Resolves with what happened to the prompt, so a client never has to infer it:
    * `{ disposition: "started" | "queued" | "steered", messageID }`.
    */
-  async prompt(sessionID, text, model, attachments = [], variant) {
+  async prompt(sessionID, text, model, attachments = [], variant, delivery = "queue") {
+    if (!["queue", "steer"].includes(delivery)) {
+      const error = new Error("Prompt delivery must be queue or steer")
+      error.status = 400
+      throw error
+    }
     const epoch = this.#stopEpochs.get(sessionID) ?? 0
     this.#checkPromptable(sessionID, epoch)
     return this.#serializePrompt(sessionID, () => {
       this.#checkPromptable(sessionID, epoch)
-      return this.#withNativeSession(sessionID, () => this.#prompt(sessionID, text, model, attachments, variant, epoch))
+      return this.#withNativeSession(sessionID, () => this.#prompt(sessionID, text, model, attachments, variant, epoch, delivery))
     })
+  }
+
+  /** Account metadata only; never load a transcript or launch a second native app-server. */
+  readRateLimits() {
+    return this.#acp.request("_account/rate_limits", {}, 5_000)
   }
 
   #checkPromptable(sessionID, epoch) {
@@ -1611,7 +1621,7 @@ export class AcpService {
     return this.#acp.withSession(sessionID, this.#sessions.get(sessionID)?.cwd, operation)
   }
 
-  async #prompt(sessionID, text, model, attachments, variant, epoch) {
+  async #prompt(sessionID, text, model, attachments, variant, epoch, delivery) {
     // Refuse before touching the session: an agent that never advertised image support
     // would reject the block mid-turn, which reads as a failed prompt rather than a
     // rejected attachment.
@@ -1635,8 +1645,8 @@ export class AcpService {
     this.#resetActionsForSessionChange(sessionID)
     // A non-empty queue without an active turn is a queued prompt applying its model before it
     // starts; a new prompt waits behind it rather than overtaking it.
-    if (this.#active.has(sessionID) || this.#queues.get(sessionID)?.length) {
-      if (this.#active.has(sessionID) && this.#midTurnPrompt === "steer" && !SLASH_PROMPT.test(text)) {
+    if (this.#active.has(sessionID) || this.#queues.get(sessionID)?.length || this.#queueDrains.has(sessionID)) {
+      if (delivery === "steer" && this.#active.has(sessionID) && this.#midTurnPrompt === "steer" && !SLASH_PROMPT.test(text)) {
         // A harness that documents taking input while working gets the prompt immediately instead of
         // the queue. Slash commands must run as their own turn, so they keep the queue even here.
         return this.#steerPrompt(sessionID, text, attachments, variant, epoch)
@@ -1772,8 +1782,9 @@ export class AcpService {
    *   input itself. The recorded prompt then joins the ordinary queue - the message id stays, so
    *   nothing is redelivered twice.
    */
-  async #steerPrompt(sessionID, text, attachments, variant, epoch) {
-    const messageID = this.#recordPrompt(sessionID, text, attachments)
+  async #steerPrompt(sessionID, text, attachments, variant, epoch, recordedMessageID, model) {
+    const messageID = recordedMessageID ?? this.#recordPrompt(sessionID, text, attachments)
+    this.#setPromptQueued(sessionID, messageID, false)
     this.#emit("session.updated", sessionID)
     const generationAtSteer = this.#turnGenerations.get(sessionID)
     let result = null
@@ -1784,9 +1795,14 @@ export class AcpService {
       }, 300_000)
     } catch (error) {
       this.#checkPromptable(sessionID, epoch)
+      // An unknown transport result may already have injected the input. Never queue a duplicate.
+      if (!(error?.code === -32601 || /not supported|unsupported|method not found/i.test(error?.message ?? ""))) {
+        error.status = 503
+        throw error
+      }
       if (this.#active.has(sessionID)) {
         const queue = this.#queues.get(sessionID) ?? []
-        queue.push({ text, model: undefined, messageID, attachments, variant })
+        queue.push({ text, model, messageID, attachments, variant })
         this.#queues.set(sessionID, queue)
         this.#setPromptQueued(sessionID, messageID, true)
         this.#emit("session.updated", sessionID)
@@ -1794,6 +1810,10 @@ export class AcpService {
       }
       // The live turn ended underneath the failed steering request. Keep the recorded message (it
       // now reads as the newest user turn of an idle session) and replay it as a regular turn.
+      const savedModel = this.#fallbackModelSelections.get(sessionID)
+      const selection = model ?? (savedModel ? `${savedModel.providerID}/${savedModel.modelID}` : undefined)
+      if (selection) await this.setModel(sessionID, selection, variant)
+      this.#checkPromptable(sessionID, epoch)
       this.#startTurn(sessionID, text, true, attachments)
       return { disposition: "started", messageID }
     }
@@ -1961,6 +1981,23 @@ export class AcpService {
   }
 
   async #runNextQueued(sessionID) {
+    if (this.#queueDrains.has(sessionID)) return
+    this.#queueDrains.add(sessionID)
+    try {
+      // Serialize the claim with promotion, not the potentially slow native model change. New
+      // prompts must still be accepted into the queue while the next turn is being prepared.
+      const ready = await this.#serializePrompt(sessionID, () => !this.#active.has(sessionID)
+        && !this.#stops.has(sessionID) && !this.#acp.isSessionStopping?.(sessionID))
+      if (ready) await this.#startNextQueued(sessionID)
+    } finally {
+      this.#queueDrains.delete(sessionID)
+      if (this.#queues.get(sessionID)?.length && !this.#active.has(sessionID)
+        && !this.#stops.has(sessionID) && !this.#acp.isSessionStopping?.(sessionID)) void this.#runNextQueued(sessionID)
+    }
+  }
+
+  async #startNextQueued(sessionID) {
+    if (this.#active.has(sessionID) || this.#stops.has(sessionID) || this.#acp.isSessionStopping?.(sessionID)) return
     const queue = this.#queues.get(sessionID)
     if (!queue?.length) return
     // The entry stays queued while its model is applied, so the session keeps reading busy through
@@ -2025,6 +2062,73 @@ export class AcpService {
     this.#emit("session.updated", sessionID)
     this.#persistSnapshot(sessionID)
     return true
+  }
+
+  /** Atomically edit a waiting prompt without losing its queue position, model or attachments. */
+  editQueued(sessionID, messageID, text) {
+    if (typeof text !== "string" || !text.trim() || text.length > 1_000_000) {
+      const error = new Error("A non-empty queued prompt under 1 MB is required")
+      error.status = 400
+      throw error
+    }
+    return this.#serializePrompt(sessionID, () => {
+      const entry = this.#queues.get(sessionID)?.find((item) => item.messageID === messageID)
+      if (!entry) return false
+      entry.text = text.trim()
+      const message = this.#messages.get(sessionID)?.find((item) => item.info.id === messageID)
+      if (message) {
+        const previousText = message.parts.find((part) => part.type === "text")
+        message.parts = [{ ...previousText, type: "text", text: entry.text }, ...message.parts.filter((part) => part.type !== "text")]
+      }
+      this.#emit("message.updated", sessionID)
+      this.#persistSnapshot(sessionID)
+      return true
+    })
+  }
+
+  /** Promote the existing queue entry, never cancel the running turn or create another user row. */
+  sendQueuedNow(sessionID, messageID) {
+    const epoch = this.#stopEpochs.get(sessionID) ?? 0
+    this.#checkPromptable(sessionID, epoch)
+    return this.#serializePrompt(sessionID, () => this.#withNativeSession(sessionID, async () => {
+      this.#checkPromptable(sessionID, epoch)
+      const queue = this.#queues.get(sessionID)
+      if (this.#queueDrains.has(sessionID)) {
+        const error = new Error("A queued turn is being prepared. The prompt remains queued; retry after it starts.")
+        error.status = 409
+        throw error
+      }
+      const index = queue?.findIndex((item) => item.messageID === messageID) ?? -1
+      if (index < 0) {
+        const error = new Error("This prompt has already started or left the queue. Refresh the conversation.")
+        error.status = 409
+        throw error
+      }
+      const entry = queue[index]
+      if (this.#active.has(sessionID) && (this.#midTurnPrompt !== "steer" || SLASH_PROMPT.test(entry.text))) {
+        const error = new Error("This harness cannot accept this prompt during a running turn. It remains queued.")
+        error.status = 409
+        throw error
+      }
+      queue.splice(index, 1)
+      if (!queue.length) this.#queues.delete(sessionID)
+      this.#setPromptQueued(sessionID, messageID, false)
+      if (this.#active.has(sessionID)) {
+        return this.#steerPrompt(sessionID, entry.text, entry.attachments ?? [], entry.variant, epoch, messageID, entry.model)
+      }
+      // The original turn finished before the click. Run this entry once as the next native turn.
+      try {
+        const savedModel = this.#fallbackModelSelections.get(sessionID)
+        const selection = entry.model ?? (savedModel ? `${savedModel.providerID}/${savedModel.modelID}` : undefined)
+        if (selection) await this.setModel(sessionID, selection, entry.variant)
+        this.#checkPromptable(sessionID, epoch)
+      } catch (error) {
+        if (epoch === (this.#stopEpochs.get(sessionID) ?? 0)) this.#recordTurnFailure(sessionID, error.message)
+        throw error
+      }
+      this.#startTurn(sessionID, entry.text, true, entry.attachments ?? [])
+      return { disposition: "started", messageID }
+    }))
   }
 
   /** Cancelling drops anything still queued, including the messages recorded for it. */
@@ -2695,7 +2799,18 @@ export class AcpService {
     const message = this.#messages.get(sessionID)?.find((item) => item.info.id === messageID)
     if (!message) return
     if (queued) message.info.queued = true
-    else delete message.info.queued
+    else {
+      delete message.info.queued
+      // Delivery order differs from enqueue order when the user promotes a later entry. Its
+      // answer is inserted before waiting rows, so its own user row must move there as well.
+      const messages = this.#messages.get(sessionID)
+      const waiting = messages.findIndex((item) => item.info.queued === true)
+      const index = messages.indexOf(message)
+      if (waiting >= 0 && index > waiting) {
+        messages.splice(index, 1)
+        messages.splice(waiting, 0, message)
+      }
+    }
     this.#emit("message.updated", sessionID)
     this.#persistSnapshot(sessionID)
   }

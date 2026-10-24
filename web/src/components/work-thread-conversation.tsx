@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { api } from "../api"
+import { CodexRateLimitsStatus } from "./codex-rate-limits"
 import type { AttachmentPart } from "../attachments"
 import { createCoalescedTailRefresh } from "../coalesced-tail-refresh"
 import type { ConversationController } from "../conversation-controller"
@@ -1177,6 +1178,32 @@ ${current}` : text) : current)
     }
   }
 
+  async function sendQueuedPromptNow(messageID: string) {
+    if (!controller.sendQueuedPromptNow || !interactionEnabled || stopping) return
+    try {
+      await controller.sendQueuedPromptNow(baseConfig, conversation.id, messageID)
+      void refreshCurrentTail()
+    } catch (reason) {
+      if (isTransportFailure(reason)) onConnectionIssueRef.current?.()
+      setError(reason instanceof Error ? reason.message : String(reason))
+      // A turn may have finished while the click travelled. Read its authoritative queue state.
+      void refreshCurrentTail()
+    }
+  }
+
+  async function editQueuedPrompt(messageID: string, text: string) {
+    if (!controller.editQueuedPrompt || !interactionEnabled || stopping) return false
+    try {
+      await controller.editQueuedPrompt(baseConfig, conversation.id, messageID, text)
+      void refreshCurrentTail()
+      return true
+    } catch (reason) {
+      if (isTransportFailure(reason)) onConnectionIssueRef.current?.()
+      setError(reason instanceof Error ? reason.message : String(reason))
+      return false
+    }
+  }
+
   async function stop() {
     if (stopping || !working || stopInFlightRef.current || !interactionEnabled) return
     stopInFlightRef.current = true
@@ -1325,9 +1352,13 @@ ${current}` : text) : current)
         }
         composerStatus={<>
           {toolbarAccessory}
+          {agents.find((agent) => agent.id === currentAgentID)?.backend === "codex" ? (
+            <CodexRateLimitsStatus config={currentTarget?.config || configForAgent(baseConfig, agents, currentAgentID)} agentID={currentAgentID} enabled={interactionEnabled} />
+          ) : null}
           <ConversationStatePill working={working || replyPending || sending || replySettling || modelBootstrapBlocked} attention={hasAttention} workingLabel={conversationStateLabel} startedAt={sending || modelBootstrapBlocked ? undefined : conversation.currentTurn?.startedAt} status={conversation.status} detail={conversation.error?.message || undefined} />
         </>}
         scrollScope={scrollScope}
+        surfaceViewRevision={surfaceViewRevision}
         messages={presentedTimeline}
         agentLabel={pendingAgentLabel}
         agentBackend={pendingAgentBackend}
@@ -1359,18 +1390,18 @@ ${current}` : text) : current)
         transcriptError={transcriptError || undefined}
         queuedPrompts={queuedPrompts}
         onCancelQueuedPrompt={controller.cancelQueuedPrompt && interactionEnabled ? cancelQueuedPrompt : undefined}
+        onSendQueuedPromptNow={controller.sendQueuedPromptNow && interactionEnabled && midTurnPromptPolicy(agents.find((agent) => agent.id === currentAgentID)) === "steer" && !stopping ? sendQueuedPromptNow : undefined}
+        onEditQueuedPrompt={controller.editQueuedPrompt && interactionEnabled && !stopping ? editQueuedPrompt : undefined}
         footerHint={hasAttention
           ? "Your input is required before the agent can continue"
           : modelBootstrapBlocked
             ? modelWaitLabel
             : working
-              ? midTurnPromptPolicy(attachmentAgent) === "steer"
-                ? "New messages are delivered live into the running task"
-                : "New messages are queued and start when the current reply finishes"
+              ? midTurnPromptPolicy(agents.find((agent) => agent.id === currentAgentID)) === "steer"
+                ? "New messages wait in the queue. Use Send now to add one to the running task."
+                : "New messages wait in the queue and start when the current reply finishes."
               : replySettling
-                ? midTurnPromptPolicy(attachmentAgent) === "steer"
-                  ? "New messages are delivered live into the running task"
-                  : "Waiting for the completed reply to become available…"
+                ? "Waiting for the completed reply to become available…"
                 : undefined}
         renderMessage={(message) => {
           const activity = activityForMessage(message as WorkThreadMessage)

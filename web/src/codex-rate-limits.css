@@ -1,0 +1,136 @@
+.codex-rate-limits-disclosure {
+  position: relative;
+  flex: 0 0 auto;
+  z-index: 5;
+  color: var(--td3-text, inherit);
+  font-size: 0.75rem;
+}
+
+.codex-rate-limits-disclosure > summary {
+  max-width: min(72vw, 20rem);
+  overflow: hidden;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--td3-border-strong, rgba(128, 128, 128, 0.3));
+  border-radius: 999px;
+  background: var(--td3-control, rgba(128, 128, 128, 0.08));
+  cursor: pointer;
+  list-style: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codex-rate-limits-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.codex-rate-limits-summary-compact {
+  display: none;
+}
+
+.codex-rate-limits-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 0.55rem);
+  width: min(22rem, calc(100vw - 2rem));
+  max-height: min(22rem, calc(100dvh - 2rem));
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--td3-border-strong, rgba(128, 128, 128, 0.3));
+  border-radius: 0.8rem;
+  background: var(--td3-panel, #fff);
+  box-shadow: 0 0.7rem 2rem rgba(0, 0, 0, 0.2);
+}
+
+.codex-rate-limits-popover .codex-rate-limits {
+  border: 0;
+  border-radius: inherit;
+}
+
+.codex-rate-limits {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.25));
+  border-radius: 0.7rem;
+  color: var(--td3-text, inherit);
+  font-size: 0.82rem;
+}
+
+.codex-rate-limits-title {
+  color: var(--td3-muted, #777);
+  font-size: 0.74rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.codex-quota-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.codex-quota-row > span:last-child {
+  display: grid;
+  justify-items: end;
+  gap: 0.12rem;
+  text-align: right;
+}
+
+.codex-quota-row small,
+.codex-quota-unknown {
+  color: var(--td3-muted, #777);
+  font-size: 0.73rem;
+}
+
+.codex-rate-limits-updated {
+  padding-top: 0.25rem;
+  border-top: 1px solid var(--border, rgba(128, 128, 128, 0.2));
+  color: var(--td3-muted, #777);
+  font-size: 0.7rem;
+}
+
+@media (max-width: 620px) {
+  .tdw-work-thread-conversation .uw-composer-meta {
+    position: relative;
+  }
+
+  .tdw-work-thread-conversation .codex-rate-limits-disclosure {
+    position: static;
+    max-width: 120px;
+    min-width: 0;
+  }
+
+  .tdw-work-thread-conversation .codex-rate-limits-disclosure > summary {
+    display: block;
+    max-width: 120px;
+    padding: 2px 4px;
+    overflow: visible;
+    font-size: 10px;
+    line-height: 1.2;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .codex-rate-limits-summary-full {
+    display: none;
+  }
+
+  .codex-rate-limits-summary-compact {
+    display: inline;
+  }
+
+  .tdw-work-thread-conversation .codex-rate-limits-popover {
+    right: 0;
+    width: min(22rem, 100%);
+    max-width: min(22rem, 100%);
+  }
+
+  .tdw-work-thread-conversation .uw-composer-meta .tdw-conversation-state {
+    width: 22px;
+    min-width: 22px;
+    max-width: 22px;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+}

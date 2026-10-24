@@ -66,7 +66,10 @@ An inconclusive probe supplies no external busy evidence; it never overrides bri
 
 Use a container cgroup or a systemd unit that limits the whole subtree before production use.
 Node heap flags do not cap native Codex. POSIX adapter process groups clean up descendants on normal
-close or wrapper exit, but cannot run a cleanup hook when Harness itself receives SIGKILL.
+close or wrapper exit. Whole-instance cleanup, including descendants that call `setsid()` and gateway
+SIGKILL, requires the container PID namespace or systemd control group described in
+`docs/LOCAL_4_NATIVE_SAFETY.md`. The candidate stops on unexpected adapter/native death, with no
+automatic restart; intentional client close and pool eviction retain their normal paths.
 Do not launch this candidate unbounded on the HA host that previously exhausted memory.
 
 Keep the previous release directory. Rollback means stopping only the candidate service and
@@ -115,8 +118,12 @@ Stop during preparation. Late output from the cancelled turn is ignored. An addi
 retry a failed cancellation. This behavior is confirmed by fake-adapter regression tests; real
 Codex timing must still be repeated in the isolated Docker lab.
 
-The candidate launcher forces ACP permission mode to deny, overriding allow profiles. It never
-automatically selects `allow_once` or `allow_always` for an escalation. The Docker template includes
+The candidate launcher forces ACP permission mode to deny, overriding allow profiles. The checked
+adapter wrapper additionally enforces native `never`/`user`/`workspace-write` on startup and every
+thread start/resume/fork and turn start. The old ACP-only deny setting did not prevent the adapter's
+default native `auto_review` from approving an escalation. Full access is disabled and unsolicited
+native approval requests are declined. See `docs/LOCAL_4_NATIVE_SAFETY.md` for the exact boundary and
+offline native-chain/lifecycle checks. The Docker template includes
 bubblewrap, but package installation alone does not enable user namespaces on the host. If bwrap
 cannot create its namespace, a tool failure must remain a failure: do not enable privileged mode,
 use a bypass flag or approve escalation to obtain a passing test. This change does not establish
@@ -137,3 +144,14 @@ input surface; narrow phones place them on the existing small status line. See
 `docs/COMPACT_WORKSPACE.md` for synthetic screenshots, measured dimensions and the isolated lab
 checklist. This candidate includes local.2's backend fixes; the outstanding native/sandbox acceptance
 gates still apply. Updating the working deployment is a separate step.
+
+## Lab hardening candidate 3.5.0-local.4
+
+See `docs/LOCAL_4_VALIDATION.md` for completed and outstanding checks, and
+`docs/LOCAL_4_RETEST.md` for an isolated Mac lab upgrade, lifecycle smoke and native long-resume
+probe. This candidate includes the earlier memory/history, native resume, Stop and compact UI
+changes. It additionally enforces native permission policy, queues new messages by default,
+adds explicit queue promotion/editing and account limits, fixes overlay/focus/activation behavior,
+and fails the isolated service on unexpected adapter/native death. Keep the same resource bounds
+and restart=no. Kernel sandbox, large native resume, container teardown and physical phone gates
+remain required before any working/HA deployment.

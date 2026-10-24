@@ -98,12 +98,13 @@ def main():
         shutil.copytree(ROOT / 'web/dist', stage / 'web')
         (stage / 'distribution').mkdir()
         (stage / 'docs').mkdir()
-        for name in ['LOCAL_2_RETEST.md', 'LOCAL_2_VALIDATION.md', 'COMPACT_WORKSPACE.md']:
+        for name in ['LOCAL_2_RETEST.md', 'LOCAL_2_VALIDATION.md', 'COMPACT_WORKSPACE.md', 'LOCAL_4_NATIVE_SAFETY.md', 'LOCAL_4_RETEST.md', 'LOCAL_4_VALIDATION.md']:
             shutil.copy2(ROOT / 'docs' / name, stage / 'docs' / name)
         (stage / 'docs/previews').mkdir()
-        for name in ['compact-desktop.png', 'compact-phone.png']:
+        for name in ['compact-desktop.png', 'compact-phone.png', 'local4-desktop.png', 'local4-phone.png']:
             shutil.copy2(ROOT / 'docs/previews' / name, stage / 'docs/previews' / name)
         shutil.copy2(ROOT / 'distribution/run.mjs', stage / 'distribution/run.mjs')
+        shutil.copy2(ROOT / 'distribution/harness-remote.service', stage / 'distribution/harness-remote.service')
         shutil.copy2(ROOT / 'distribution/README.md', stage / 'README-LOCAL.md')
         extract_package(verified_package('qrcode-terminal'), stage / 'node_modules/qrcode-terminal')
         extract_package(verified_package('codex-acp'), stage / 'vendor/codex-acp', {'dist/index.js', 'package.json', 'LICENSE', 'README.md'})

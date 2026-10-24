@@ -4,6 +4,27 @@ import { once } from "node:events"
 import test from "node:test"
 import { closeOwnedChildProcess, ownChildProcess } from "../src/managed-child-process.js"
 
+test("isolated candidate fails the instance on adapter death and permits intentional close", { skip: process.platform === "win32", timeout: 8000 }, async () => {
+  for (const intentional of [false, true]) {
+    const source = `
+      import { spawn } from 'node:child_process';
+      import { once } from 'node:events';
+      import { ownChildProcess, closeOwnedChildProcess } from ${JSON.stringify(new URL("../src/managed-child-process.js", import.meta.url).href)};
+      const child = ownChildProcess(spawn(process.execPath, ['--v8-pool-size=1', '-e', "console.log('ready'); setInterval(()=>{},1000)"], {detached:true, stdio:['ignore','pipe','ignore']}), {processGroup:true});
+      await once(child.stdout, 'data');
+      ${intentional ? "await closeOwnedChildProcess(child); console.log('closed deliberately');" : "child.kill('SIGKILL'); await once(child, 'exit');"}
+    `
+    const gateway = spawn(process.execPath, ["--v8-pool-size=1", "--max-old-space-size=32", "--input-type=module", "-e", source], {
+      env: { ...process.env, HARNESS_REMOTE_EXIT_ON_ADAPTER_FAILURE: "1" }, stdio: ["ignore", "pipe", "pipe"]
+    })
+    let stderr = ""
+    gateway.stderr.on("data", (chunk) => { stderr += chunk })
+    const [code] = await once(gateway, "exit")
+    assert.equal(code, intentional ? 0 : 1)
+    if (!intentional) assert.match(stderr, /adapter exited unexpectedly/)
+  }
+})
+
 test("waits for native child exit and escalates when SIGTERM can be ignored", async () => {
   const child = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); process.stdout.write('ready\\n'); setInterval(() => {}, 1000)"], {
     stdio: ["ignore", "pipe", "ignore"]

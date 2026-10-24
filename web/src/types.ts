@@ -96,6 +96,26 @@ export type HealthResponse = {
   backend?: BackendKind
 }
 
+export type CodexRateLimitWindow = {
+  tier: "primary" | "secondary"
+  usedPercent: number
+  windowDurationMins: number
+  resetsAt: number | null
+}
+
+export type CodexRateLimitBucket = {
+  id: string
+  name?: string
+  windows: CodexRateLimitWindow[]
+}
+
+export type CodexRateLimits = {
+  state: "available" | "unavailable"
+  reason?: "unavailable"
+  updatedAt: number | null
+  buckets: CodexRateLimitBucket[]
+}
+
 export type ModelSelection = {
   providerID: string
   modelID: string

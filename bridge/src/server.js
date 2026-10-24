@@ -1,5 +1,6 @@
 import http from "node:http"
 import { LOCAL_RELEASE_INFO } from "./local-release-info.js"
+import { createCodexRateLimitsReader, serveCodexRateLimits } from "./codex-rate-limits-server.js"
 import { readdir, realpath } from "node:fs/promises"
 import path from "node:path"
 import { selectableAcpModelValue } from "./agent-model-catalog.js"
@@ -219,6 +220,10 @@ export function createBridgeServer({ config, acp, serviceOptions, machineRegistr
     midTurnPrompt: profile.capabilities?.midTurnPrompt
   })
   const hiddenSessionIDs = serviceOptions?.hiddenSessionIDs
+  const readRateLimits = createCodexRateLimitsReader(() => {
+    if (backend !== "codex") throw new Error("Account limits are only available for Codex")
+    return service.readRateLimits()
+  })
   const liveSessionActivity = new Map()
   let sseClients = 0
   const unsubscribeActivity = service.subscribe((event) => {
@@ -350,6 +355,10 @@ export function createBridgeServer({ config, acp, serviceOptions, machineRegistr
     const directory = url.searchParams.get("directory") || undefined
     if (config.logRequests && url.pathname === "/config/providers") process.stderr.write(`[bridge] ${request.method} ${url.pathname}${url.search}\n`)
     try {
+      if (request.method === "GET" && url.pathname === "/account/rate_limits") {
+        await serveCodexRateLimits(response, readRateLimits)
+        return
+      }
       if (request.method === "GET" && (url.pathname === "/v1/machine" || url.pathname === "/global/machine")) {
         if (!machineRegistry) {
           writeJSON(response, 503, { error: "Machine registry is not configured" })
@@ -526,7 +535,7 @@ export function createBridgeServer({ config, acp, serviceOptions, machineRegistr
           const text = body.parts?.find((part) => part.type === "text")?.text ?? ""
           const attachments = parseAttachments(body.parts)
           if (!text && !attachments.length) throw new Error("A text prompt is required")
-          await service.prompt(sessionID, text, modelWireName(body.model), attachments)
+          await service.prompt(sessionID, text, modelWireName(body.model), attachments, body.variant, body.delivery ?? "queue")
           writeJSON(response, 200, true)
           return
         }
@@ -542,6 +551,16 @@ export function createBridgeServer({ config, acp, serviceOptions, machineRegistr
         if (request.method === "DELETE" && operation === "queue" && actionID) {
           // One prompt waiting behind the running turn is withdrawn; the turn itself keeps running.
           writeJSON(response, 200, { removed: service.unqueue(sessionID, decodeURIComponent(actionID)) })
+          return
+        }
+        if (request.method === "POST" && operation === "queue" && actionID) {
+          writeJSON(response, 200, await service.sendQueuedNow(sessionID, decodeURIComponent(actionID)))
+          return
+        }
+        if (request.method === "PATCH" && operation === "queue" && actionID) {
+          const body = await readBody(request)
+          const edited = await service.editQueued(sessionID, decodeURIComponent(actionID), body.text)
+          writeJSON(response, edited ? 200 : 409, { edited })
           return
         }
         if (request.method === "POST" && operation === "abort") {
@@ -569,7 +588,7 @@ export function createBridgeServer({ config, acp, serviceOptions, machineRegistr
       }
       writeJSON(response, 404, { error: "Not found" })
     } catch (error) {
-      const status = [400, 413, 503].includes(error?.status) ? error.status : 400
+      const status = [400, 409, 413, 503].includes(error?.status) ? error.status : 400
       writeJSON(response, status, { error: error instanceof Error ? error.message : "Request failed", ...(error?.code ? { code: error.code } : {}) })
     }
   })

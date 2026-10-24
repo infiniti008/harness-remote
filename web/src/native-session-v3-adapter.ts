@@ -743,6 +743,7 @@ function reconcileQueuedPrompts(entry: NativeConversationEntry, page: MessagePag
     const tracked = entry.queuedPrompts.get(message.info.id)
     if (tracked) {
       tracked.seen = true
+      tracked.prompt = canonicalText(visiblePrompt(message))
       continue
     }
     if ([...entry.turns.values()].some((turn) => turn.nativeMessageID === message.info.id)) continue
@@ -978,6 +979,26 @@ function nativeConversationController(entry: NativeConversationEntry): Conversat
       await ensureWriter(entry)
       await api.cancelQueuedPrompt(entry.target.config, entry.target.sessionID, messageID, entry.target.directory)
       entry.queuedPrompts.delete(messageID)
+      notifyTranscript(entry)
+    },
+
+    async sendQueuedPromptNow(_config, conversationId, messageID) {
+      requireConversationScope(entry, conversationId)
+      await ensureWriter(entry)
+      const result = await api.sendQueuedPromptNow(entry.target.config, entry.target.sessionID, messageID, entry.target.directory)
+      // The authoritative tail promotes this same recorded row into a logical turn. Keep its
+      // request identity until then, including after a lost response or a session switch.
+      const pending = entry.queuedPrompts.get(messageID)
+      if (pending && result.disposition === "steered") pending.model = entry.currentModel
+      notifyTranscript(entry)
+    },
+
+    async editQueuedPrompt(_config, conversationId, messageID, text) {
+      requireConversationScope(entry, conversationId)
+      await ensureWriter(entry)
+      await api.editQueuedPrompt(entry.target.config, entry.target.sessionID, messageID, text, entry.target.directory)
+      const pending = entry.queuedPrompts.get(messageID)
+      if (pending) pending.prompt = canonicalText(text)
       notifyTranscript(entry)
     },
 

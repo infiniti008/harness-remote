@@ -279,7 +279,7 @@ export function createMachineDaemonServer({
     }
     claimedAcpSessions.add(nativeSessionKey(agentID, sessionID))
   }
-  const promptSession = async (agentID, sessionID, { text, directory, model, variant, attachments = [] }) => {
+  const promptSession = async (agentID, sessionID, { text, directory, model, variant, attachments = [], delivery = "queue" }) => {
     const entry = daemon.hostEntry(agentID)
     if (!entry) throw daemonError("unknown_agent", `Unknown agent: ${agentID}`)
     const requestedModel = model ? { ...model, ...(variant ? { variant } : {}) } : null
@@ -294,7 +294,7 @@ export function createMachineDaemonServer({
       // after the variant and mutated a live turn's configuration.
       // The disposition (started, queued or steered) travels back in the mutation result, so the app
       // shows a queued prompt as waiting from the daemon's word rather than guessing from timing.
-      const outcome = await service.prompt(sessionID, text, modelWireName(resolvedModel), acpPromptAttachments(attachments), acpModelVariant(resolvedModel))
+      const outcome = await service.prompt(sessionID, text, modelWireName(resolvedModel), acpPromptAttachments(attachments), acpModelVariant(resolvedModel), delivery)
       return outcome?.disposition ? { disposition: outcome.disposition, messageID: outcome.messageID } : undefined
     }
 

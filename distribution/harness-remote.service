@@ -1,0 +1,29 @@
+# Example only. Set paths, credentials and UID for an isolated test instance before installation.
+# Never put this unit on the HA host before the documented acceptance/rollback checks pass.
+[Unit]
+Description=Harness Remote isolated local candidate
+After=network.target
+
+[Service]
+Type=exec
+User=harness
+Group=harness
+WorkingDirectory=/opt/harness/current
+EnvironmentFile=/etc/harness-remote.env
+ExecStart=/usr/bin/node --v8-pool-size=1 --max-old-space-size=256 /opt/harness/current/distribution/run.mjs --host 127.0.0.1 --port 4902 --root /srv/project --state-dir /var/lib/harness-remote/gateway
+Restart=no
+# Account for gateway, adapter, native Codex, MCP servers and daemonized descendants together.
+KillMode=control-group
+KillSignal=SIGTERM
+TimeoutStopSec=15s
+SendSIGKILL=yes
+MemoryAccounting=yes
+MemoryMax=1G
+MemorySwapMax=0
+CPUQuota=100%
+TasksMax=128
+# A cgroup OOM ends the unit instead of keeping a partial native process tree alive.
+OOMPolicy=kill
+
+[Install]
+WantedBy=multi-user.target

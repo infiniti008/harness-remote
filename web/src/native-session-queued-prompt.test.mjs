@@ -27,6 +27,8 @@ globalThis.localStorage = storage
 const { api } = await import('./api.ts')
 const originalLoadMessagePage = api.loadMessagePage
 const originalListStatuses = api.listStatuses
+const originalSendQueuedPromptNow = api.sendQueuedPromptNow
+const originalEditQueuedPrompt = api.editQueuedPrompt
 const { registerNativeSessionV3Adapter } = await import('./native-session-v3-adapter.ts')
 
 const CONFIG = { backend: 'claude', host: '127.0.0.1', port: 4097, username: 'harness', password: 'pw', agentId: 'claude' }
@@ -68,8 +70,9 @@ function assistant(sessionID, id, text) {
   }
 }
 
-function respondWith(results) {
-  globalThis.fetch = async () => {
+function respondWith(results, onRequest) {
+  globalThis.fetch = async (url, options) => {
+    onRequest?.(url, options)
     const body = results.shift()
     return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
   }
@@ -78,7 +81,27 @@ function respondWith(results) {
 function restore() {
   api.loadMessagePage = originalLoadMessagePage
   api.listStatuses = originalListStatuses
+  api.sendQueuedPromptNow = originalSendQueuedPromptNow
+  api.editQueuedPrompt = originalEditQueuedPrompt
   globalThis.fetch = originalFetch
+}
+
+async function startQueuedPrompt(registration, sessionID, prompt, clientRequestId, messageID) {
+  let queuedClientRequestId
+  respondWith([
+    { status: 'accepted', clientRequestId: `running-${clientRequestId}`, result: { disposition: 'started', messageID: `running-${messageID}` } },
+    { status: 'accepted', clientRequestId, result: { disposition: 'queued', messageID } }
+  ], (url, options) => {
+    if (String(url).endsWith(`/session/${sessionID}/prompt`)) {
+      queuedClientRequestId = JSON.parse(options.body).clientRequestId
+    }
+  })
+  await registration.controller.loadMessagePage(CONFIG, sessionID, DIRECTORY)
+  await registration.controller.continueConversation(CONFIG, registration.conversation.id, { prompt: 'already running', model: MODEL })
+  const conversation = await registration.controller.continueConversation(CONFIG, registration.conversation.id, { prompt, model: MODEL })
+  assert.equal(conversation.turns.length, 1)
+  assert.equal(conversation.currentTurn.prompt, 'already running')
+  return { conversation, clientRequestId: queuedClientRequestId }
 }
 
 test('a queued prompt stays out of the turns until the transcript shows it started, across a remount', async () => {
@@ -175,5 +198,109 @@ test('a queued row this client never sent is adopted, and a Stop discards waitin
     else globalThis.localStorage = originalStorage
     if (originalWindow === undefined) delete globalThis.window
     else globalThis.window = originalWindow
+  }
+})
+
+test('Send now keeps a queued request tracked until the tail clears queued and promotes it exactly once', async () => {
+  storage.clear()
+  const sessionID = 'queued-send-now-session'
+  let page = { messages: [], hasMore: false }
+  api.loadMessagePage = async () => page
+  api.listStatuses = async () => ({ [sessionID]: { type: 'busy' } })
+  const registration = registerNativeSessionV3Adapter(target(sessionID), () => {})
+  let sendNowCalls = 0
+  api.sendQueuedPromptNow = async () => {
+    sendNowCalls += 1
+    return { disposition: 'steered', messageID: 'bridge-queued-now' }
+  }
+
+  try {
+    const { clientRequestId } = await startQueuedPrompt(registration, sessionID, 'wait for me', 'request-queued-now', 'bridge-queued-now')
+    page = { messages: [user(sessionID, 'bridge-queued-now', 'wait for me', true)], hasMore: false }
+    await registration.controller.loadMessagePage(CONFIG, sessionID, DIRECTORY, undefined, 200, true)
+
+    await registration.controller.sendQueuedPromptNow(CONFIG, registration.conversation.id, 'bridge-queued-now')
+    assert.equal(sendNowCalls, 1)
+    let conversation = await registration.controller.refreshConversation(CONFIG, registration.conversation.id)
+    assert.equal(conversation.turns.length, 1, 'the queued entry remains pending while the tail still marks it queued')
+    assert.equal(conversation.currentTurn.prompt, 'already running')
+
+    page = { messages: [user(sessionID, 'bridge-queued-now', 'wait for me')], hasMore: false }
+    await registration.controller.loadMessagePage(CONFIG, sessionID, DIRECTORY, undefined, 200, true)
+    conversation = await registration.controller.refreshConversation(CONFIG, registration.conversation.id)
+    assert.equal(conversation.turns.length, 2)
+    assert.equal(conversation.currentTurn.id, `${registration.conversation.id}:request:${clientRequestId}`)
+    assert.equal(conversation.currentTurn.prompt, 'wait for me')
+
+    await registration.controller.loadMessagePage(CONFIG, sessionID, DIRECTORY, undefined, 200, true)
+    conversation = await registration.controller.refreshConversation(CONFIG, registration.conversation.id)
+    assert.equal(conversation.turns.length, 2, 'a second tail refresh does not create another turn')
+    assert.equal(conversation.turns.filter((turn) => turn.id === `${registration.conversation.id}:request:${clientRequestId}`).length, 1)
+  } finally {
+    registration.dispose()
+    restore()
+  }
+})
+
+test('a queued row edited by another client updates the tracked prompt from the tail', async () => {
+  storage.clear()
+  const sessionID = 'queued-external-edit-session'
+  let page = { messages: [], hasMore: false }
+  api.loadMessagePage = async () => page
+  api.listStatuses = async () => ({ [sessionID]: { type: 'busy' } })
+  const registration = registerNativeSessionV3Adapter(target(sessionID), () => {})
+
+  try {
+    const { clientRequestId } = await startQueuedPrompt(registration, sessionID, 'original queued text', 'request-external-edit', 'bridge-external-edit')
+    page = { messages: [user(sessionID, 'bridge-external-edit', 'original queued text', true)], hasMore: false }
+    await registration.controller.loadMessagePage(CONFIG, sessionID, DIRECTORY, undefined, 200, true)
+
+    // Another client edits the daemon row. This controller learns about it from the authoritative tail.
+    page = { messages: [user(sessionID, 'bridge-external-edit', 'edited in another window', true)], hasMore: false }
+    await registration.controller.loadMessagePage(CONFIG, sessionID, DIRECTORY, undefined, 200, true)
+    page = { messages: [user(sessionID, 'bridge-external-edit', 'edited in another window')], hasMore: false }
+    await registration.controller.loadMessagePage(CONFIG, sessionID, DIRECTORY, undefined, 200, true)
+
+    const conversation = await registration.controller.refreshConversation(CONFIG, registration.conversation.id)
+    assert.equal(conversation.turns.length, 2)
+    assert.equal(conversation.currentTurn.id, `${registration.conversation.id}:request:${clientRequestId}`)
+    assert.equal(conversation.currentTurn.prompt, 'edited in another window')
+  } finally {
+    registration.dispose()
+    restore()
+  }
+})
+
+test('a failed queued-row edit leaves the tracked entry available for tail promotion', async () => {
+  storage.clear()
+  const sessionID = 'queued-edit-failure-session'
+  let page = { messages: [], hasMore: false }
+  api.loadMessagePage = async () => page
+  api.listStatuses = async () => ({ [sessionID]: { type: 'busy' } })
+  api.editQueuedPrompt = async () => { throw new Error('edit rejected') }
+  const registration = registerNativeSessionV3Adapter(target(sessionID), () => {})
+
+  try {
+    const { clientRequestId } = await startQueuedPrompt(registration, sessionID, 'keep this prompt', 'request-edit-failure', 'bridge-edit-failure')
+    page = { messages: [user(sessionID, 'bridge-edit-failure', 'keep this prompt', true)], hasMore: false }
+    await registration.controller.loadMessagePage(CONFIG, sessionID, DIRECTORY, undefined, 200, true)
+
+    await assert.rejects(
+      registration.controller.editQueuedPrompt(CONFIG, registration.conversation.id, 'bridge-edit-failure', 'rejected edit'),
+      /edit rejected/
+    )
+    await registration.controller.loadMessagePage(CONFIG, sessionID, DIRECTORY, undefined, 200, true)
+    let conversation = await registration.controller.refreshConversation(CONFIG, registration.conversation.id)
+    assert.equal(conversation.turns.length, 1, 'a failed edit keeps the row queued')
+
+    page = { messages: [user(sessionID, 'bridge-edit-failure', 'keep this prompt')], hasMore: false }
+    await registration.controller.loadMessagePage(CONFIG, sessionID, DIRECTORY, undefined, 200, true)
+    conversation = await registration.controller.refreshConversation(CONFIG, registration.conversation.id)
+    assert.equal(conversation.turns.length, 2)
+    assert.equal(conversation.currentTurn.id, `${registration.conversation.id}:request:${clientRequestId}`, 'the failed edit did not discard the request identity')
+    assert.equal(conversation.currentTurn.prompt, 'keep this prompt')
+  } finally {
+    registration.dispose()
+    restore()
   }
 })

@@ -1,6 +1,6 @@
 {
   "name": "harness-remote-local",
-  "version": "3.5.0-local.3",
+  "version": "3.5.0-local.4",
   "type": "module",
   "bin": {
     "harness-remote": "bridge/src/launcher.js",

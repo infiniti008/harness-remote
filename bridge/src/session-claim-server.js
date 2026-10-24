@@ -18,6 +18,7 @@ function requestError(message) {
 }
 
 function statusForSessionError(error) {
+  if ([400, 409, 413, 503].includes(error?.status)) return error.status
   if (error?.code === "invalid_request") return 400
   if (error?.code === "unknown_agent") return 404
   if (error?.code === "agent_unavailable") return 503
@@ -107,8 +108,10 @@ function promptInput(body) {
   const model = promptModelInput(body)
   const variant = typeof body.variant === "string" && body.variant.trim() ? body.variant.trim() : undefined
   const attachments = promptAttachmentsInput(body.attachments)
+  const delivery = body.delivery ?? "queue"
+  if (delivery !== "queue" && delivery !== "steer") throw requestError("Prompt delivery must be queue or steer")
   if (!text) throw requestError("A text prompt is required")
-  return { ...common, text, model, variant, attachments }
+  return { ...common, text, model, variant, attachments, delivery }
 }
 
 function commandInput(body) {
@@ -277,6 +280,7 @@ export function createSessionClaimServer({
             directory: input.directory,
             model: input.model,
             variant: input.variant ?? null,
+            delivery: input.delivery,
             attachments: input.attachments.map((attachment) => ({
               mime: attachment.mime,
               filename: attachment.filename,

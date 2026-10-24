@@ -1,4 +1,5 @@
 import { useRef } from "react"
+import { createPortal } from "react-dom"
 import { useDialogDismiss } from "../useDialogDismiss"
 
 /**
@@ -18,7 +19,7 @@ export function ImageLightbox({ src, label, onClose }: { src: string; label: str
   // autoFocus lands a keyboard user on the close control and arms the hook's Escape listener on mount.
   useDialogDismiss(panelRef, onClose, { autoFocus: true })
 
-  return (
+  return createPortal((
     <div className="uw-image-lightbox-backdrop" role="presentation" onMouseDown={onClose}>
       <section
         className="uw-image-lightbox"
@@ -33,5 +34,5 @@ export function ImageLightbox({ src, label, onClose }: { src: string; label: str
         <p className="uw-image-lightbox-caption">{label}</p>
       </section>
     </div>
-  )
+  ), document.body)
 }

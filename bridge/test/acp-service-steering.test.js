@@ -84,7 +84,7 @@ test("a steering harness forwards a prompt into the live turn instead of queuein
   const service = new AcpService(acp, { midTurnPrompt: "steer" })
   const first = service.prompt("s1", "first")
   await waitFor(() => service.status("s1").type === "busy", "the first turn never started")
-  await service.prompt("s1", "second")
+  await service.prompt("s1", "second", undefined, [], undefined, "steer")
   const steering = acp.calls.filter(([method]) => method === "_session/steering")
   assert.equal(steering.length, 1)
   assert.deepEqual(steering[0][1].prompt, [{ type: "text", text: "second" }])
@@ -101,7 +101,7 @@ test("an adapter that refuses steering hands the recorded prompt to the ordinary
   const service = new AcpService(acp, { midTurnPrompt: "steer" })
   const first = service.prompt("s1", "first")
   await waitFor(() => service.status("s1").type === "busy", "the first turn never started")
-  await service.prompt("s1", "second")
+  await service.prompt("s1", "second", undefined, [], undefined, "steer")
   assert.equal(await userMessageCount(service), 2, "the steered attempt is still recorded exactly once")
   acp.releasePrompt?.()
   await first
@@ -133,7 +133,7 @@ test("a slash command takes the queue even while a steering turn runs", async ()
   const service = new AcpService(acp, { midTurnPrompt: "steer" })
   const first = service.prompt("s1", "first")
   await waitFor(() => service.status("s1").type === "busy", "the first turn never started")
-  await service.prompt("s1", "/rename New name")
+  await service.prompt("s1", "/rename New name", undefined, [], undefined, "steer")
   acp.releasePrompt?.()
   await first
   await waitFor(() => acp.calls.filter(([method]) => method === "session/prompt").length >= 2, "the queued slash command never started a turn")
@@ -147,7 +147,7 @@ test("a steering request that resolves startedNewTurn keeps the session busy unt
   const service = new AcpService(acp, { midTurnPrompt: "steer" })
   const first = service.prompt("s1", "first")
   await waitFor(() => service.status("s1").type === "busy", "the first turn never started")
-  const second = service.prompt("s1", "second")
+  const second = service.prompt("s1", "second", undefined, [], undefined, "steer")
   // The steering response is in flight inside the adapter until the previous turn drains, which is
   // the order the real adapter guarantees for a turn it starts itself.
   await waitFor(() => acp.waitingOnPreviousTurn, "the steering request never reached the adapter")
@@ -221,7 +221,7 @@ test("output streamed after an injected steering prompt answers that prompt, bel
   void service.prompt("s1", "first")
   await waitFor(() => acp.releases.length === 1, "the first turn never started")
   acp.chunk("working on first")
-  await service.prompt("s1", "second")
+  await service.prompt("s1", "second", undefined, [], undefined, "steer")
   acp.chunk("answer to second")
   assert.deepEqual(await transcriptShape(service), [
     "user:first",
@@ -338,7 +338,7 @@ test("a steering harness reports a steered prompt, and Stop removes a queued one
   const steerService = new AcpService(steering, { midTurnPrompt: "steer" })
   await steerService.prompt("s1", "first")
   await waitFor(() => steering.releases.length === 1, "the first turn never started")
-  assert.equal((await steerService.prompt("s1", "second")).disposition, "steered")
+  assert.equal((await steerService.prompt("s1", "second", undefined, [], undefined, "steer")).disposition, "steered")
   steering.releases.shift()()
   await waitFor(() => steerService.status("s1").type === "idle", "the steered turn never settled")
 
@@ -346,7 +346,7 @@ test("a steering harness reports a steered prompt, and Stop removes a queued one
   const service = new AcpService(acp)
   await service.prompt("s1", "first")
   await waitFor(() => acp.releases.length === 1, "the first turn never started")
-  const queued = await service.prompt("s1", "second")
+  const queued = await service.prompt("s1", "second", undefined, [], undefined, "steer")
   service.abort("s1")
   assert.equal((await service.messages("s1")).some((message) => message.info.id === queued.messageID), false)
   acp.releases.shift()()

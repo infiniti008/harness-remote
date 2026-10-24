@@ -3,6 +3,7 @@ const closePromises = new WeakMap()
 const finishedChildren = new WeakSet()
 const failedSpawns = new WeakSet()
 const ownedGroups = new WeakSet()
+const intentionallyClosing = new WeakSet()
 let exitHookInstalled = false
 
 function signalOwned(child, signal) {
@@ -57,6 +58,15 @@ export function ownChildProcess(child, { processGroup = false } = {}) {
     }
     finishedChildren.add(child)
     drop(child)
+    // Portable process groups cannot contain a descendant that calls setsid(). The bounded
+    // candidate therefore fails the whole service on an unexpected adapter exit, allowing its
+    // container/systemd cgroup to reap every descendant, including those outside this group.
+    // Source launches keep the existing recovery behavior unless explicitly opted in.
+    if (ownedGroups.has(child) && !intentionallyClosing.has(child)
+      && process.env.HARNESS_REMOTE_EXIT_ON_ADAPTER_FAILURE === "1") {
+      process.stderr.write("Owned ACP adapter exited unexpectedly; stopping the isolated Harness instance\n")
+      process.exit(1)
+    }
   })
   // A failed spawn emits `error` and then `close`, without a child PID or `exit` event.
   child.once("error", () => {
@@ -75,6 +85,7 @@ export function ownChildProcess(child, { processGroup = false } = {}) {
 /** Terminate an owned child and wait until Node observes its exit. Concurrent closes share a promise. */
 export function closeOwnedChildProcess(child, { graceMs = 1_000 } = {}) {
   if (!child) return Promise.resolve()
+  intentionallyClosing.add(child)
   const existing = closePromises.get(child)
   if (existing) return existing
   if (exited(child)) {

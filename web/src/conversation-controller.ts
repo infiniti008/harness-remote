@@ -25,6 +25,8 @@ export type ConversationController = {
   stopConversation: (config: Parameters<typeof taskClient.cancelWorkThread>[0], conversationId: string) => Promise<ConversationRuntime>
   /** Withdraw one prompt still waiting behind the running turn. Absent where nothing is queued. */
   cancelQueuedPrompt?: (config: Parameters<typeof taskClient.cancelWorkThread>[0], conversationId: string, messageID: string) => Promise<void>
+  sendQueuedPromptNow?: (config: Parameters<typeof taskClient.cancelWorkThread>[0], conversationId: string, messageID: string) => Promise<void>
+  editQueuedPrompt?: (config: Parameters<typeof taskClient.cancelWorkThread>[0], conversationId: string, messageID: string, text: string) => Promise<boolean | void>
 }
 
 export const taskConversationController: ConversationController = {

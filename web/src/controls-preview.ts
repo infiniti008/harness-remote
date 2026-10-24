@@ -43,6 +43,7 @@ import "./beautiful-ui-controls.css"
 import "./activity-timeline.css"
 import "./session-header-narrow.css"
 import "./compact-workspace.css"
+import "./codex-rate-limits.css"
 
 /** Same list, same order as `main.tsx` - `beautiful-ui-controls.test.mjs` asserts the two match, so
  *  a sheet added to the app cannot silently go missing from its own preview. */

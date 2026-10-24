@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react"
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react"
 import { ATTACHMENT_MAX_COUNT, fileToAttachment, imageFilesFromClipboard, type AttachmentPart } from "../attachments"
 import type { QueuedPromptEntry } from "../mid-turn-policy"
 import type { CommandInfo, MessageEnvelope } from "../types"
@@ -189,6 +189,10 @@ type Props = {
   queuedPrompts?: QueuedPromptEntry[]
   /** Withdraw one queued prompt; renders the × on its row. */
   onCancelQueuedPrompt?: (id: string) => void
+  /** Start one accepted queued prompt ahead of the remaining queue. */
+  onSendQueuedPromptNow?: (id: string) => Promise<void> | void
+  /** Update the text while preserving the queued prompt's attachments. `false` keeps the editor open. */
+  onEditQueuedPrompt?: (id: string, text: string) => Promise<boolean | void> | boolean | void
   /**
    * The harness takes further prompts while its turn runs (steered into it or queued behind it), so
    * `sending`/`waiting` describe the running turn rather than gate the composer, and Send stays
@@ -200,12 +204,14 @@ type Props = {
    * means "no memory": the transcript behaves exactly as before and never reads or writes a position.
    */
   scrollScope?: string
+  /** Bumped when a cached Session surface becomes active again. */
+  surfaceViewRevision?: number
 }
 
 type TranscriptProps = Pick<Props,
   "messages" | "agentLabel" | "agentBackend" | "loading" | "waiting" | "ready" | "hasMore" |
   "loadingOlder" | "onLoadOlder" | "sending" | "workingLabel" | "showWaitingIndicator" | "emptyText" |
-  "transcriptError" | "renderMessage" | "scrollScope"
+  "transcriptError" | "renderMessage" | "scrollScope" | "surfaceViewRevision"
 >
 
 type JumpAffordances = { top: boolean; bottom: boolean }
@@ -304,6 +310,7 @@ function transcriptPropsEqual(previous: TranscriptProps, next: TranscriptProps):
     && previous.emptyText === next.emptyText
     && previous.transcriptError === next.transcriptError
     && previous.scrollScope === next.scrollScope
+    && previous.surfaceViewRevision === next.surfaceViewRevision
 }
 
 /**
@@ -329,7 +336,8 @@ const ConversationTranscript = memo(function ConversationTranscript({
   emptyText = "This conversation has no messages yet.",
   transcriptError,
   renderMessage,
-  scrollScope
+  scrollScope,
+  surfaceViewRevision
 }: TranscriptProps) {
   const transcriptRef = useRef<HTMLDivElement>(null)
   // Seed the "near bottom" intent from this scope's last remembered position, so reopening a Session
@@ -338,6 +346,7 @@ const ConversationTranscript = memo(function ConversationTranscript({
   const nearBottomRef = useRef(restoreScrollRef.current?.nearBottom ?? true)
   // Restore the exact saved position at most once per mount (guard against re-seeding on later renders).
   const restoredRef = useRef(false)
+  const previousViewRevisionRef = useRef(surfaceViewRevision)
   const preservingOlderRef = useRef(false)
   const loadOlderRef = useRef(onLoadOlder)
   const followFrameRef = useRef<number | undefined>(undefined)
@@ -379,20 +388,31 @@ const ConversationTranscript = memo(function ConversationTranscript({
     }
   }, [])
 
+  // Activate the cached tail before paint; retain remembered-position behavior for legacy consumers.
   // Restore the remembered position at most once per mount, on the first frame after the content has
   // rendered. The surface re-reads and shows "Loading conversation…" before the messages appear, so
   // this waits for that; it never fights an in-flight older-history load, and it keeps the reader's
   // "I was scrolled up" intent by not claiming the tail as the new bottom for them.
-  useEffect(() => {
-    if (restoredRef.current) return
+  useLayoutEffect(() => {
+    const returningToView = surfaceViewRevision !== undefined
+      && (!restoredRef.current || previousViewRevisionRef.current !== surfaceViewRevision)
+    if (restoredRef.current && !returningToView) return
     const restore = restoreScrollRef.current
     const transcript = transcriptRef.current
-    if (!restore || !transcript || preservingOlderRef.current || loading || !ready) return
+    if ((!restore && !returningToView) || !transcript || preservingOlderRef.current || loading || !ready) return
+    previousViewRevisionRef.current = surfaceViewRevision
     restoredRef.current = true
+    if (returningToView) {
+      transcript.scrollTo({ top: transcript.scrollHeight, behavior: "instant" })
+      nearBottomRef.current = true
+      refreshJumpAffordances(transcript)
+      return
+    }
     const frame = window.requestAnimationFrame(() => {
       const current = transcriptRef.current
       if (!current || preservingOlderRef.current) return
       const bottom = Math.max(0, current.scrollHeight - current.clientHeight)
+      if (!restore) return
       // A reader who had scrolled up left an offset measured from the bottom of that (possibly longer)
       // window. Restore that offset, not the raw top distance: min(save, bottom) would collapse an
       // "up in history" reader straight to the tail whenever the freshly re-read window is shorter, which
@@ -405,7 +425,7 @@ const ConversationTranscript = memo(function ConversationTranscript({
       refreshJumpAffordances(current)
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [loading, ready])
+  }, [loading, ready, surfaceViewRevision])
 
   liveRef.current = sending || waiting
 
@@ -663,14 +683,20 @@ export function TaskDeskConversation({
   composerStatus,
   queuedPrompts = [],
   onCancelQueuedPrompt,
+  onSendQueuedPromptNow,
+  onEditQueuedPrompt,
   canSendWhileWaiting = false,
   scrollScope,
+  surfaceViewRevision,
   renderMessage
 }: Props) {
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const attachmentInputRef = useRef<HTMLInputElement>(null)
   const composerFrameRef = useRef<number | undefined>(undefined)
   const [commandIndex, setCommandIndex] = useState(0)
+  const [queuedPromptEditID, setQueuedPromptEditID] = useState<string | null>(null)
+  const [queuedPromptDraft, setQueuedPromptDraft] = useState("")
+  const [queuedPromptPendingID, setQueuedPromptPendingID] = useState<string | null>(null)
   const touchFirst = hasTouchFirstPointer()
   const commandToken = draft.startsWith("/") && !draft.includes("\n") ? draft.slice(1) : ""
   const commandMenuOpen = Boolean(draft.startsWith("/") && !draft.includes("\n") && !/\s/.test(commandToken) && commands.length)
@@ -695,6 +721,19 @@ export function TaskDeskConversation({
   // way to send that they do not have. Enter inserts a newline there; the Send button is the action.
   const composerBusy = Boolean(composerBusyLabel)
   const hint = footerHint ?? (touchFirst ? "Enter adds a line. Tap Send to send." : "Enter to send · Shift+Enter for a newline")
+
+  async function runQueuedPromptAction(id: string, action: () => Promise<unknown> | unknown): Promise<unknown> {
+    if (queuedPromptPendingID) return false
+    setQueuedPromptPendingID(id)
+    try {
+      return await action()
+    } catch {
+      // The owning Session reports action failures in its normal error surface.
+      return false
+    } finally {
+      setQueuedPromptPendingID(null)
+    }
+  }
 
   useEffect(() => {
     if (composerFrameRef.current !== undefined) window.cancelAnimationFrame(composerFrameRef.current)
@@ -783,6 +822,7 @@ export function TaskDeskConversation({
         transcriptError={transcriptError}
         renderMessage={renderMessage}
         scrollScope={scrollScope}
+        surfaceViewRevision={surfaceViewRevision}
       />
 
       <div className="uw-composer-meta">
@@ -796,18 +836,85 @@ export function TaskDeskConversation({
         {queuedPrompts.length ? (
           <div className="uw-queued-prompts" aria-label="Prompts waiting behind the running turn">
             {queuedPrompts.map((entry) => (
-              <span className="uw-queued-prompt" key={entry.id}>
+              <div className="uw-queued-prompt" key={entry.id}>
                 <span className="uw-queued-prompt-badge">Queued</span>
-                {entry.text ? <span className="uw-queued-prompt-text">{entry.text}</span> : null}
+                {queuedPromptEditID === entry.id ? (
+                  <textarea
+                    rows={2}
+                    className="uw-queued-prompt-edit"
+                    aria-label="Edit queued prompt"
+                    value={queuedPromptDraft}
+                    disabled={queuedPromptPendingID === entry.id}
+                    onChange={(event) => setQueuedPromptDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault()
+                        if (!queuedPromptPendingID && onEditQueuedPrompt) {
+                          void runQueuedPromptAction(entry.id, () => onEditQueuedPrompt(entry.id, queuedPromptDraft))
+                            .then((result) => {
+                              if (result !== false) setQueuedPromptEditID(null)
+                            })
+                        }
+                      } else if (event.key === "Escape") {
+                        setQueuedPromptEditID(null)
+                      }
+                    }}
+                  />
+                ) : entry.text ? <span className="uw-queued-prompt-text">{entry.text}</span> : null}
                 {entry.attachmentCount ? (
                   <span className="uw-queued-prompt-count">
                     {entry.attachmentCount} image{entry.attachmentCount === 1 ? "" : "s"}
                   </span>
                 ) : null}
+                {queuedPromptEditID === entry.id ? (
+                  <div className="uw-queued-prompt-actions">
+                    <button
+                      type="button"
+                      className="uw-queued-prompt-action"
+                      disabled={queuedPromptPendingID !== null}
+                      onClick={() => {
+                        if (!onEditQueuedPrompt || queuedPromptPendingID) return
+                        void runQueuedPromptAction(entry.id, () => onEditQueuedPrompt(entry.id, queuedPromptDraft))
+                          .then((result) => {
+                            if (result !== false) setQueuedPromptEditID(null)
+                          })
+                      }}
+                    >Save</button>
+                    <button
+                      type="button"
+                      className="uw-queued-prompt-action"
+                      disabled={queuedPromptPendingID !== null}
+                      onClick={() => setQueuedPromptEditID(null)}
+                    >Cancel</button>
+                  </div>
+                ) : (
+                  <div className="uw-queued-prompt-actions">
+                    {onSendQueuedPromptNow ? (
+                      <button
+                        type="button"
+                        className="uw-queued-prompt-action"
+                        disabled={queuedPromptPendingID !== null}
+                        onClick={() => void runQueuedPromptAction(entry.id, () => onSendQueuedPromptNow(entry.id))}
+                      >Send now</button>
+                    ) : null}
+                    {onEditQueuedPrompt ? (
+                      <button
+                        type="button"
+                        className="uw-queued-prompt-action"
+                        disabled={queuedPromptPendingID !== null}
+                        onClick={() => {
+                          setQueuedPromptDraft(entry.text)
+                          setQueuedPromptEditID(entry.id)
+                        }}
+                      >Edit</button>
+                    ) : null}
+                  </div>
+                )}
                 {onCancelQueuedPrompt ? (
                   <button
                     type="button"
                     className="uw-queued-prompt-cancel"
+                    disabled={queuedPromptPendingID !== null}
                     onClick={() => onCancelQueuedPrompt(entry.id)}
                     aria-label={`Remove queued prompt: ${entry.text || "attachments"}`}
                     title="Remove from queue"
@@ -815,7 +922,7 @@ export function TaskDeskConversation({
                     <CloseIcon size={13} />
                   </button>
                 ) : null}
-              </span>
+              </div>
             ))}
           </div>
         ) : null}

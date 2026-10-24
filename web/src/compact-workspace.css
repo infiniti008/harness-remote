@@ -165,9 +165,9 @@
 .uw-composer-input-row .uw-composer-routing .tdw-single-agent-control { display: none; }
 .uw-composer-input-row .uw-composer-routing select { width: auto; max-width: 110px; min-height: 36px; padding: 4px 22px 4px 8px; border: 0; background-color: transparent; font-size: 12px; }
 .uw-composer-input-row .uw-composer-model { flex: none; }
-.uw-composer-input-row .tdw-model-picker.compact { position: static; width: clamp(120px, 16vw, 210px); }
-.uw-composer-input-row .tdw-model-trigger { min-height: 36px; padding: 4px 7px; border: 0; border-radius: 12px; background: transparent; }
-.uw-composer-input-row .tdw-model-trigger-copy { flex-direction: row; align-items: baseline; gap: 5px; }
+.uw-composer-input-row .tdw-model-picker.compact { position: static; width: clamp(120px, 16vw, 210px); margin-bottom: 2px; }
+.uw-composer-input-row .tdw-model-trigger { min-height: 36px; padding: 2px 7px; border: 0; border-radius: 12px; background: transparent; }
+.uw-composer-input-row .tdw-model-trigger-copy { flex-direction: row; align-items: center; gap: 5px; }
 .uw-composer-input-row .tdw-model-trigger-copy strong { font-size: 12px; }
 .uw-composer-input-row .tdw-model-trigger-copy small { font-size: 10px; }
 .uw-composer-input-row .tdw-model-popover { top: auto; right: 0; bottom: calc(100% + 8px); max-height: min(560px, 64dvh); }

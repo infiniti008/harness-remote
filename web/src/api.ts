@@ -28,7 +28,8 @@ import type {
   Session,
   SessionStatus,
   TodoItem,
-  VcsStatus
+  VcsStatus,
+  CodexRateLimits
 } from "./types"
 
 export { baseUrl, isValidServerConfig }
@@ -296,6 +297,10 @@ export const api = {
     return request<HarnessCapabilities>(config, "/v1/capabilities")
   },
 
+  loadCodexRateLimits(config: ServerConfig) {
+    return request<CodexRateLimits>(config, "/account/rate_limits", { readTimeout: 8_000 })
+  },
+
   listSessions(config: ServerConfig, directory?: string) {
     return request<Session[]>(config, withDirectory("/session", directory))
   },
@@ -408,6 +413,16 @@ export const api = {
   /** Withdraw one prompt the daemon still holds behind the running turn; the turn keeps running. */
   cancelQueuedPrompt(config: ServerConfig, id: string, messageID: string, directory?: string) {
     return request<{ removed: boolean }>(config, withDirectory(`/session/${id}/queue/${encodeURIComponent(messageID)}`, directory), { method: "DELETE" })
+  },
+
+  sendQueuedPromptNow(config: ServerConfig, id: string, messageID: string, directory?: string) {
+    return request<{ disposition: "started" | "queued" | "steered"; messageID: string }>(config,
+      withDirectory(`/session/${id}/queue/${encodeURIComponent(messageID)}`, directory), { method: "POST", body: {} })
+  },
+
+  editQueuedPrompt(config: ServerConfig, id: string, messageID: string, text: string, directory?: string) {
+    return request<{ edited: boolean }>(config,
+      withDirectory(`/session/${id}/queue/${encodeURIComponent(messageID)}`, directory), { method: "PATCH", body: { text } })
   },
 
   async loadMessagePage(config: ServerConfig, sessionID: string, directory?: string, before?: string, limit = 100, refreshHistory = false): Promise<MessagePage> {

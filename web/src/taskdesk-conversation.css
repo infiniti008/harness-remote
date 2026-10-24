@@ -252,6 +252,14 @@
   line-height: 1.48;
 }
 
+/* The shell owns the focus state. Global form focus styles otherwise draw a second
+   rectangular ring inside the rounded composer. */
+.tdw-work-thread-conversation .uw-composer-shell textarea:focus {
+  outline: none;
+  border-color: transparent;
+  box-shadow: none;
+}
+
 .tdw-work-thread-conversation .uw-composer-attachments {
   display: flex;
   flex-wrap: wrap;
@@ -327,6 +335,52 @@
   font-weight: 600;
   color: var(--td3-blue-text);
   opacity: .75;
+}
+
+.tdw-work-thread-conversation .uw-queued-prompt-actions {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.tdw-work-thread-conversation .uw-queued-prompt-action {
+  min-height: 24px;
+  padding: 2px 7px;
+  border: 1px solid var(--td3-border);
+  border-radius: 6px;
+  color: var(--td3-text-2);
+  background: var(--td3-panel);
+  font-size: 10px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.tdw-work-thread-conversation .uw-queued-prompt-action:hover:not(:disabled),
+.tdw-work-thread-conversation .uw-queued-prompt-action:focus-visible {
+  border-color: var(--td3-blue-border);
+  color: var(--td3-blue-text);
+  background: var(--td3-blue-soft);
+}
+
+.tdw-work-thread-conversation .uw-queued-prompt-action:disabled,
+.tdw-work-thread-conversation .uw-queued-prompt-cancel:disabled {
+  opacity: .55;
+  cursor: wait;
+}
+
+.tdw-work-thread-conversation .uw-queued-prompt-edit {
+  min-height: 44px;
+  max-height: 120px;
+  resize: vertical;
+  flex: 1 1 160px;
+  width: 0;
+  min-width: 80px;
+  min-height: 28px;
+  padding: 3px 7px;
+  border: 1px solid var(--td3-border-strong);
+  border-radius: 6px;
+  font-size: 12px;
 }
 
 .tdw-work-thread-conversation .uw-composer-attachment {
@@ -542,8 +596,7 @@
   display: grid;
   place-items: center;
   padding: 20px;
-  background: var(--td3-veil);
-  backdrop-filter: blur(10px);
+  background: color-mix(in srgb, var(--td3-panel) 92%, black);
 }
 
 .uw-image-lightbox {
@@ -557,6 +610,7 @@
   border: 1px solid var(--td3-border-strong);
   border-radius: 14px;
   background: var(--td3-panel-2);
+  isolation: isolate;
   color: var(--td3-text);
   box-shadow: 0 28px 90px rgba(0, 0, 0, 0.45);
 }

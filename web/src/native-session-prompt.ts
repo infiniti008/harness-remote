@@ -229,6 +229,7 @@ export async function sendNativeSessionPrompt(
   const path = `/session/${encodeURIComponent(target.sessionID)}/prompt`
   const body = {
     clientRequestId: pending.clientRequestId,
+    delivery: "queue",
     text: pending.wireText || pending.text,
     directory: target.directory,
     model: pending.model ? { providerID: pending.model.providerID, modelID: pending.model.modelID } : undefined,

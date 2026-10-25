@@ -11,7 +11,9 @@ import path from "node:path"
 import { createInterface } from "node:readline"
 import { pathToFileURL } from "node:url"
 import { createCodexHistoryLoader } from "../src/codex-session-history.js"
+import { inspectCodexIndex } from "../src/codex-index-preflight.js"
 import { startOfflineResponsesProvider, offlineProviderConfig } from "./fixtures/offline-responses-provider.mjs"
+import { continueThroughOfflineGateway } from "./fixtures/offline-gateway-continuation.mjs"
 
 export async function readNativeSmokeBudget(root = "/sys/fs/cgroup") {
   try {
@@ -119,7 +121,7 @@ function connectNative(executable, home, workspace, development) {
   const child = spawn(command, development ? ["--as=1073741824", "--cpu=10", "--", executable, ...args] : args, {
     detached: true, cwd: workspace, stdio: ["pipe", "pipe", "pipe"],
     // Deliberately do not inherit CODEX_HOME, config, provider routing or account credentials.
-    env: { PATH: process.env.PATH, HOME: home, CODEX_HOME: home, TMPDIR: path.join(home, "tmp"), LANG: "C.UTF-8", TOKIO_WORKER_THREADS: "2", RAYON_NUM_THREADS: "1", UV_THREADPOOL_SIZE: "1", NODE_OPTIONS: "--v8-pool-size=1 --max-old-space-size=32", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0", GIT_ALLOW_PROTOCOL: "file" }
+    env: { PATH: process.env.PATH, HOME: home, CODEX_HOME: home, TMPDIR: path.join(home, "tmp"), LANG: "C.UTF-8", TOKIO_WORKER_THREADS: "2", RAYON_NUM_THREADS: "1", UV_THREADPOOL_SIZE: "1", NODE_OPTIONS: "--v8-pool-size=1 --max-old-space-size=32 --disable-wasm-trap-handler", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0", GIT_ALLOW_PROTOCOL: "file" }
   })
   const pending = new Map()
   const events = []
@@ -188,11 +190,13 @@ function connectNative(executable, home, workspace, development) {
   }
 }
 
-export async function runNativeLongResumeSmoke(argv = process.argv.slice(2)) {
+export async function runNativeLongResumeSmoke(argv = process.argv.slice(2), { mcpProbe } = {}) {
   const value = (key) => argv.find((arg) => arg.startsWith(`--${key}=`))?.slice(key.length + 3)
   const executable = value("codex")
   const development = argv.includes("--development-small")
+  const gatewayContinuation = argv.includes("--gateway-continuation")
   const items = Number(value("items") || (development ? 40 : 40000))
+  if (mcpProbe) assert.ok(development && gatewayContinuation && items === 2, "readonly MCP probe is an isolated two-item development case")
   const messageStream = value("message-stream") || "completed"
   const artifactsParent = value("artifacts-dir")
   if (artifactsParent !== undefined) await validateArtifactsDirectory(artifactsParent)
@@ -211,6 +215,10 @@ export async function runNativeLongResumeSmoke(argv = process.argv.slice(2)) {
   const workspace = path.join(temp, "workspace")
   const userMarker = `EARLY_USER_${randomUUID()}`
   const assistantMarker = `EARLY_ASSISTANT_${randomUUID()}`
+  const continuationMarker = `GATEWAY_ASSISTANT_${randomUUID()}`
+  let releaseCompletion
+  const completionGate = new Promise((resolve) => { releaseCompletion = resolve })
+  const gateway = {}
   const children = new Set()
   const started = Date.now()
   let provider
@@ -232,7 +240,7 @@ export async function runNativeLongResumeSmoke(argv = process.argv.slice(2)) {
     phase = next; phaseStarted = Date.now()
     console.error(JSON.stringify({ status: "progress", phase, elapsedMs: Date.now() - started }))
   }
-  const diagnostic = () => ({ phase, phaseElapsedMs: Date.now() - phaseStarted, elapsedMs: Date.now() - started, version, items, messageStream, budget, phases, pages, displayed, provider: provider?.requests, native: natives.map((native) => ({ pid: native.child.pid, metrics: native.metrics, stderrTail: native.stderr })), samples })
+  const diagnostic = () => ({ phase, phaseElapsedMs: Date.now() - phaseStarted, elapsedMs: Date.now() - started, version, items, messageStream, budget, phases, pages, displayed, provider: provider?.requests, native: natives.map((native) => ({ pid: native.child.pid, metrics: native.metrics, stderrTail: native.stderr })), ...(gatewayContinuation ? { gateway } : {}), samples })
   const sample = async () => {
     if (samplePending) return
     samplePending = true
@@ -241,7 +249,7 @@ export async function runNativeLongResumeSmoke(argv = process.argv.slice(2)) {
       resources.rolloutBytes = await Promise.all((await filesBelow(path.join(home, "sessions")).catch(() => [])).filter((file) => file.endsWith(".jsonl")).slice(0, 2).map(async (file) => (await stat(file)).size))
       samples.push({ elapsedMs: Date.now() - started, phase, ...resources })
       if (samples.length > 24) samples.shift()
-      console.error(JSON.stringify({ status: "progress", phase, phaseElapsedMs: Date.now() - phaseStarted, elapsedMs: Date.now() - started, resources, pages, displayed, provider: provider?.requests, native: natives.map((native) => native.metrics) }))
+      console.error(JSON.stringify({ status: "progress", phase, phaseElapsedMs: Date.now() - phaseStarted, elapsedMs: Date.now() - started, resources, pages, displayed, provider: provider?.requests, native: natives.map((native) => native.metrics), ...(gatewayContinuation ? { gateway } : {}) }))
     } finally { samplePending = false }
   }
   try {
@@ -252,10 +260,13 @@ export async function runNativeLongResumeSmoke(argv = process.argv.slice(2)) {
     version = execFileSync(executable, ["--version"], { encoding: "utf8", timeout: 5000, maxBuffer: 4096, env: { PATH: process.env.PATH, HOME: home, CODEX_HOME: home, TMPDIR: path.join(home, "tmp") } }).trim()
     if (!development && !/^codex-cli 0\.163\.0$/.test(version)) throw new Error("Native acceptance requires exactly Codex 0.163.0")
     if (development && !/^codex-cli 0\.(156\.1|163\.0)$/.test(version)) throw new Error("Small protocol development requires reviewed Codex 0.156.1 or 0.163.0")
-    provider = await startOfflineResponsesProvider({ items, userMarker, assistantMarker, messageStream })
+    if (mcpProbe) assert.equal(version, "codex-cli 0.163.0", "MCP gateway proof requires pinned native 0.163.0")
+    provider = await startOfflineResponsesProvider({ items, userMarker, assistantMarker, messageStream,
+      ...(mcpProbe ? { toolCommands: [null, { mcpTool: "mcp__readonly_fixture__read_marker" }] } : {}),
+      ...(gatewayContinuation ? { continuationMarker, continuationMessageStream: "deltas", beforeComplete: async (summary) => { if (summary.sequence > (mcpProbe ? 2 : 1)) await completionGate } } : {}) })
     await writeFile(path.join(home, "config.toml"), offlineProviderConfig(provider.baseURL))
     progress = setInterval(() => { sample().catch(() => {}) }, 5000)
-    watchdog = setTimeout(() => { for (const child of children) { try { process.kill(-child.pid, "SIGKILL") } catch {} } }, development ? 30000 : 180000)
+    watchdog = setTimeout(() => { for (const child of children) { try { child.fixtureGraceful ? child.kill("SIGTERM") : process.kill(-child.pid, "SIGKILL") } catch {} } }, development ? 30000 : 180000)
     enter("seed_initialize")
     const native = connectNative(executable, home, workspace, development)
     natives.push(native)
@@ -269,6 +280,15 @@ export async function runNativeLongResumeSmoke(argv = process.argv.slice(2)) {
     enter("seed_turn_drain")
     await sample()
     await native.waitTurn(turn.turn.id)
+    if (gatewayContinuation) {
+      enter("native_index_backfill")
+      const deadline = Date.now() + (development ? 20000 : 120000)
+      while (!(await inspectCodexIndex(home, { sqliteHome: home })).ready) {
+        assert.ok(Date.now() < deadline, "actual native index backfill must finish before gateway startup")
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      gateway.nativeIndexReady = true
+    }
     enter("seed_shutdown")
     await native.close(); children.delete(native.child)
     enter("source_validation")
@@ -293,21 +313,31 @@ export async function runNativeLongResumeSmoke(argv = process.argv.slice(2)) {
     if (!development) await assert.rejects(loader(threadID), { code: "HISTORY_READ_LIMIT" })
     await cp(rollouts[0], snapshot)
     observedRequestCount = provider.requests.length
-    enter("resume_initialize")
-    const resumed = connectNative(executable, home, workspace, development)
-    natives.push(resumed)
-    children.add(resumed.child)
-    await resumed.initialize()
-    enter("native_resume")
-    const reply = await resumed.request("thread/resume", { threadId: threadID, excludeTurns: true, approvalPolicy: "never", approvalsReviewer: "user", sandbox: "workspace-write" })
-    assert.equal(reply.thread.id, threadID)
-    assert.ok(!reply.thread.turns?.length, "resume must not return full history")
-    enter("continuation_start")
-    const continued = await resumed.request("turn/start", { threadId: threadID, input: [{ type: "text", text: "Continue using original native context" }], approvalPolicy: "never", approvalsReviewer: "user", sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: false } })
-    enter("continuation_drain")
-    await resumed.waitTurn(continued.turn.id)
-    enter("continuation_validation")
-    await resumed.close(); children.delete(resumed.child)
+    if (gatewayContinuation) {
+      if (mcpProbe) {
+        const config = path.join(home, "config.toml")
+        await writeFile(config, `${await readFile(config, "utf8")}\n[mcp_servers.readonly_fixture]\ncommand = ${JSON.stringify(process.execPath)}\nargs = ${JSON.stringify(["--v8-pool-size=1", "--max-old-space-size=32", "--disable-wasm-trap-handler", mcpProbe.serverScript, mcpProbe.marker])}\nrequired = true\nenabled_tools = ["read_marker"]\nstartup_timeout_sec = 5\ntool_timeout_sec = 5\n`)
+      }
+      await continueThroughOfflineGateway({ temp, home, workspace, executable, development, archive: value("archive"), threadID, originalMessages: seen.size,
+        continuationMarker, provider, releaseCompletion, children, enter, diagnostics: gateway, mcpProbe })
+      enter("continuation_validation")
+    } else {
+      enter("resume_initialize")
+      const resumed = connectNative(executable, home, workspace, development)
+      natives.push(resumed)
+      children.add(resumed.child)
+      await resumed.initialize()
+      enter("native_resume")
+      const reply = await resumed.request("thread/resume", { threadId: threadID, excludeTurns: true, approvalPolicy: "never", approvalsReviewer: "user", sandbox: "workspace-write" })
+      assert.equal(reply.thread.id, threadID)
+      assert.ok(!reply.thread.turns?.length, "resume must not return full history")
+      enter("continuation_start")
+      const continued = await resumed.request("turn/start", { threadId: threadID, input: [{ type: "text", text: "Continue using original native context" }], approvalPolicy: "never", approvalsReviewer: "user", sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: false } })
+      enter("continuation_drain")
+      await resumed.waitTurn(continued.turn.id)
+      enter("continuation_validation")
+      await resumed.close(); children.delete(resumed.child)
+    }
     const contextRequest = provider.requests.slice(observedRequestCount).find((request) => request.userMarker && request.assistantMarker)
     assert.ok(contextRequest, "offline resumed Responses input must contain early user AND assistant native context")
     assert.equal((await inspectNativeRollout(snapshot, assistantMarker)).sha256, originalHash, "frozen source snapshot must remain byte-identical")
@@ -315,8 +345,9 @@ export async function runNativeLongResumeSmoke(argv = process.argv.slice(2)) {
     assert.equal((await inspectNativeRollout(rollouts[0], assistantMarker, originalBytes)).sha256, originalHash, "native continuation must preserve every existing rollout byte")
     const memoryPeak = budget.enforced ? Number((await readFile("/sys/fs/cgroup/memory.peak", "utf8")).trim()) : null
     enter("complete")
-    console.log(JSON.stringify({ status: development ? "development_passed_not_acceptance" : "passed", version, items, messageStream, nativeRecords: original.records, originalBytes, displayMessages: seen.size, seedMessages: retained, originalSHA256: originalHash, originalPrefixUnchanged: true, snapshotUnchanged: true, resumedNativeContext: true, providerRequests: provider.requests.length, provider: provider.requests, native: natives.map((native) => native.metrics), phases, elapsedMs: Date.now() - started, memoryPeak, budget }))
+    console.log(JSON.stringify({ status: mcpProbe ? "passed_offline_readonly_mcp" : development ? "development_passed_not_acceptance" : "passed", version, items, messageStream, nativeRecords: original.records, originalBytes, displayMessages: seen.size, seedMessages: retained, originalSHA256: originalHash, originalPrefixUnchanged: true, snapshotUnchanged: true, resumedNativeContext: true, providerRequests: provider.requests.length, provider: provider.requests, native: natives.map((native) => native.metrics), ...(gatewayContinuation ? { gateway } : {}), phases, elapsedMs: Date.now() - started, memoryPeak, budget }))
   } catch (error) {
+    releaseCompletion()
     clearInterval(progress)
     await sample().catch(() => {})
     for (const child of children) { try { process.kill(-child.pid, "SIGKILL") } catch {} }

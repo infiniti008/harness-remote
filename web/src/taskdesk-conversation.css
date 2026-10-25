@@ -50,6 +50,9 @@
   scroll-padding-block: 20px;
 }
 
+/* One measurable history box, including late image/font changes; no per-message observers. */
+.uw-transcript-content { display: flow-root; }
+
 /* Room for the reply under a just-sent message; sized inline by the transcript. */
 .uw-transcript-reply-room {
   flex: none;

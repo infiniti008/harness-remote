@@ -105,11 +105,11 @@
     display: block;
     max-width: 120px;
     padding: 2px 4px;
-    overflow: visible;
+    overflow: hidden;
     font-size: 10px;
     line-height: 1.2;
-    text-overflow: clip;
-    white-space: normal;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .codex-rate-limits-summary-full {

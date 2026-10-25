@@ -132,6 +132,7 @@
   display: flex;
   flex: none;
   align-items: center;
+  min-height: 24px;
   gap: 8px;
   width: min(1040px, calc(100% - 32px));
   margin: 0 auto 5px;

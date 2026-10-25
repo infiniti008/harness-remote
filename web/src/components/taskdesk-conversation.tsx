@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react"
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MutableRefObject, type ReactNode } from "react"
 import { ATTACHMENT_MAX_COUNT, fileToAttachment, imageFilesFromClipboard, type AttachmentPart } from "../attachments"
 import type { QueuedPromptEntry } from "../mid-turn-policy"
 import type { CommandInfo, MessageEnvelope } from "../types"
@@ -212,7 +212,7 @@ type TranscriptProps = Pick<Props,
   "messages" | "agentLabel" | "agentBackend" | "loading" | "waiting" | "ready" | "hasMore" |
   "loadingOlder" | "onLoadOlder" | "sending" | "workingLabel" | "showWaitingIndicator" | "emptyText" |
   "transcriptError" | "renderMessage" | "scrollScope" | "surfaceViewRevision"
->
+> & { composerGeometry: MutableRefObject<(() => void) | null> }
 
 type JumpAffordances = { top: boolean; bottom: boolean }
 
@@ -311,6 +311,7 @@ function transcriptPropsEqual(previous: TranscriptProps, next: TranscriptProps):
     && previous.transcriptError === next.transcriptError
     && previous.scrollScope === next.scrollScope
     && previous.surfaceViewRevision === next.surfaceViewRevision
+    && previous.composerGeometry === next.composerGeometry
 }
 
 /**
@@ -337,9 +338,11 @@ const ConversationTranscript = memo(function ConversationTranscript({
   transcriptError,
   renderMessage,
   scrollScope,
-  surfaceViewRevision
+  surfaceViewRevision,
+  composerGeometry
 }: TranscriptProps) {
   const transcriptRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
   // Seed the "near bottom" intent from this scope's last remembered position, so reopening a Session
   // the reader had scrolled up in does not pin its tail back down. A first open has no entry yet.
   const restoreScrollRef = useRef<ScrollSnapshot | undefined>(scrollScope ? readScrollMemory(scrollScope) : undefined)
@@ -347,6 +350,7 @@ const ConversationTranscript = memo(function ConversationTranscript({
   // Restore the exact saved position at most once per mount (guard against re-seeding on later renders).
   const restoredRef = useRef(false)
   const previousViewRevisionRef = useRef(surfaceViewRevision)
+  const settlingTailRef = useRef(false)
   const preservingOlderRef = useRef(false)
   const loadOlderRef = useRef(onLoadOlder)
   const followFrameRef = useRef<number | undefined>(undefined)
@@ -407,6 +411,7 @@ const ConversationTranscript = memo(function ConversationTranscript({
     previousViewRevisionRef.current = surfaceViewRevision
     restoredRef.current = true
     if (returningToView) {
+      settlingTailRef.current = true
       transcript.scrollTo({ top: transcript.scrollHeight, behavior: "instant" })
       nearBottomRef.current = true
       refreshJumpAffordances(transcript)
@@ -433,10 +438,33 @@ const ConversationTranscript = memo(function ConversationTranscript({
 
   liveRef.current = sending || waiting
 
-  // A reply keeps growing after the frame that followed it: message content renders after the
-  // envelope arrives, and the transcript itself resizes with the window, the composer and a soft
-  // keyboard. Re-settle on those too, or the newest lines end up under the composer. Outside a live
-  // turn this only resizes the live room, so expanding an old tool card never moves the view.
+  // The composer autosizes separately from this memoized transcript. Keep its current tail
+  // intention in the same layout transaction, rather than letting one frame paint with the old
+  // scrollTop and a smaller viewport. Reading/expanding old history retires idle settlement.
+  useLayoutEffect(() => {
+    const settleGeometry = () => {
+      const transcript = transcriptRef.current
+      if (!transcript || preservingOlderRef.current) return
+      if (liveRoomRef.current && spacerRef.current) sizeLiveRoom(transcript, spacerRef.current)
+      if (restoredRef.current && nearBottomRef.current && (settlingTailRef.current || liveRef.current)) {
+        transcript.scrollTo({ top: transcript.scrollHeight, behavior: "instant" })
+      }
+      refreshJumpAffordances(transcript)
+    }
+    composerGeometry.current = settleGeometry
+    // ResizeObserver runs before paint. Observing content as well as the viewport covers images,
+    // font metrics and responsive markdown without a timer or one observer per message.
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(settleGeometry)
+    if (transcriptRef.current) observer?.observe(transcriptRef.current)
+    if (contentRef.current) observer?.observe(contentRef.current)
+    return () => {
+      observer?.disconnect()
+      if (composerGeometry.current === settleGeometry) composerGeometry.current = null
+    }
+  }, [composerGeometry])
+
+  // Streaming DOM changes share one follow frame. Geometry itself is handled synchronously by
+  // the layout/resize hook above, including idle activation; explicit history reads still win.
   useEffect(() => {
     const transcript = transcriptRef.current
     if (!transcript) return
@@ -452,12 +480,9 @@ const ConversationTranscript = memo(function ConversationTranscript({
         refreshJumpAffordances(transcript)
       })
     }
-    const resizes = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(settle)
-    resizes?.observe(transcript)
     const mutations = typeof MutationObserver === "undefined" ? undefined : new MutationObserver(settle)
     mutations?.observe(transcript, { childList: true, subtree: true, characterData: true })
     return () => {
-      resizes?.disconnect()
       mutations?.disconnect()
       if (frame !== undefined) window.cancelAnimationFrame(frame)
     }
@@ -527,6 +552,7 @@ const ConversationTranscript = memo(function ConversationTranscript({
     // History loading is an explicit move away from the live tail. Cancel any already-scheduled
     // follow frame before it can race the prepend and snap the transcript back to the newest turn.
     nearBottomRef.current = false
+    settlingTailRef.current = false
     preservingOlderRef.current = true
     if (followFrameRef.current !== undefined) {
       window.cancelAnimationFrame(followFrameRef.current)
@@ -557,6 +583,7 @@ const ConversationTranscript = memo(function ConversationTranscript({
     const current = transcriptRef.current
     if (!current) return
     nearBottomRef.current = false
+    settlingTailRef.current = false
     current.scrollTo({ top: 0, behavior: "smooth" })
   }
 
@@ -564,6 +591,7 @@ const ConversationTranscript = memo(function ConversationTranscript({
     const current = transcriptRef.current
     if (!current) return
     nearBottomRef.current = true
+    settlingTailRef.current = false
     current.scrollTo({ top: current.scrollHeight, behavior: "smooth" })
   }
 
@@ -574,8 +602,17 @@ const ConversationTranscript = memo(function ConversationTranscript({
         role="log"
         aria-label="Conversation transcript"
         ref={transcriptRef}
+        onPointerDown={() => { settlingTailRef.current = false }}
+        onTouchMove={() => { settlingTailRef.current = false; nearBottomRef.current = false }}
+        onKeyDown={(event) => {
+          if (["ArrowUp", "PageUp", "Home"].includes(event.key)) {
+            settlingTailRef.current = false
+            nearBottomRef.current = false
+          }
+        }}
         onWheel={(event) => {
           if (event.deltaY < 0) nearBottomRef.current = false
+          if (event.deltaY < 0) settlingTailRef.current = false
         }}
         onScroll={(event) => {
           const element = event.currentTarget
@@ -583,49 +620,52 @@ const ConversationTranscript = memo(function ConversationTranscript({
           scrollFrameRef.current = window.requestAnimationFrame(() => {
             scrollFrameRef.current = undefined
             nearBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight <= NEAR_BOTTOM_PX
+            if (!nearBottomRef.current) settlingTailRef.current = false
             refreshJumpAffordances(element)
             writeScrollMemory(scrollScope, element, nearBottomRef.current)
           })
         }}
       >
-        {loading || !ready ? (
-          <div className="uw-empty-panel"><LoadingIcon size={22} /><strong>Loading conversation…</strong></div>
-        ) : (
-          <>
-            {hasMore ? (
-              <div className="uw-history-loader">
-                <button
-                  type="button"
-                  className="uw-history-load"
-                  disabled={loadingOlder}
-                  onClick={() => void loadOlder()}
-                  title={loadingOlder ? "Loading earlier messages" : "Load earlier messages"}
-                  aria-label={loadingOlder ? "Loading earlier messages" : "Load earlier messages"}
-                >
-                  {loadingOlder ? <LoadingIcon size={13} /> : <JumpToTopIcon size={13} />}
-                  <span>{loadingOlder ? "Loading…" : "Earlier messages"}</span>
-                </button>
-              </div>
-            ) : null}
-            {transcriptError ? (
-              <div className="uw-empty-panel uw-transcript-error" role="alert">
-                <AlertIcon size={24} />
-                <strong>Session history could not be loaded.</strong>
-                <span>{transcriptError}</span>
-              </div>
-            ) : null}
-            {messages.length === 0 && !waiting && !transcriptError ? (
-              <div className="uw-empty-panel"><ChatIcon size={24} /><strong>{emptyText}</strong></div>
-            ) : renderMessage
-              ? messages.map((message) => renderMessage(message))
-              : messages.map((message) => (
-                  <MessageBubble key={message.info.id} message={message} agentLabel={agentLabel} />
-                ))}
-          </>
-        )}
-        {/* Loading history is a read, not a new reply. Wait for the transcript before deciding
-            whether the live turn needs a placeholder or already has its own assistant bubble. */}
-        {!loading && ready && (sending || (waiting && showWaitingIndicator)) ? <ThinkingIndicator agentLabel={agentLabel} agentBackend={agentBackend} workingLabel={workingLabel} /> : null}
+        <div className="uw-transcript-content" ref={contentRef}>
+          {loading || !ready ? (
+            <div className="uw-empty-panel"><LoadingIcon size={22} /><strong>Loading conversation…</strong></div>
+          ) : (
+            <>
+              {hasMore ? (
+                <div className="uw-history-loader">
+                  <button
+                    type="button"
+                    className="uw-history-load"
+                    disabled={loadingOlder}
+                    onClick={() => void loadOlder()}
+                    title={loadingOlder ? "Loading earlier messages" : "Load earlier messages"}
+                    aria-label={loadingOlder ? "Loading earlier messages" : "Load earlier messages"}
+                  >
+                    {loadingOlder ? <LoadingIcon size={13} /> : <JumpToTopIcon size={13} />}
+                    <span>{loadingOlder ? "Loading…" : "Earlier messages"}</span>
+                  </button>
+                </div>
+              ) : null}
+              {transcriptError ? (
+                <div className="uw-empty-panel uw-transcript-error" role="alert">
+                  <AlertIcon size={24} />
+                  <strong>Session history could not be loaded.</strong>
+                  <span>{transcriptError}</span>
+                </div>
+              ) : null}
+              {messages.length === 0 && !waiting && !transcriptError ? (
+                <div className="uw-empty-panel"><ChatIcon size={24} /><strong>{emptyText}</strong></div>
+              ) : renderMessage
+                ? messages.map((message) => renderMessage(message))
+                : messages.map((message) => (
+                    <MessageBubble key={message.info.id} message={message} agentLabel={agentLabel} />
+                  ))}
+            </>
+          )}
+          {/* Loading history is a read, not a new reply. Wait for the transcript before deciding
+              whether the live turn needs a placeholder or already has its own assistant bubble. */}
+          {!loading && ready && (sending || (waiting && showWaitingIndicator)) ? <ThinkingIndicator agentLabel={agentLabel} agentBackend={agentBackend} workingLabel={workingLabel} /> : null}
+        </div>
         <div className="uw-transcript-reply-room" ref={spacerRef} aria-hidden="true" />
       </div>
 
@@ -697,6 +737,7 @@ export function TaskDeskConversation({
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const attachmentInputRef = useRef<HTMLInputElement>(null)
   const composerFrameRef = useRef<number | undefined>(undefined)
+  const composerGeometry = useRef<(() => void) | null>(null)
   const [commandIndex, setCommandIndex] = useState(0)
   const [queuedPromptEditID, setQueuedPromptEditID] = useState<string | null>(null)
   const [queuedPromptDraft, setQueuedPromptDraft] = useState("")
@@ -745,8 +786,10 @@ export function TaskDeskConversation({
       composerFrameRef.current = undefined
       const composer = composerRef.current
       if (!composer) return
+      const previousComposerHeight = composer.style.height
       composer.style.height = "auto"
       composer.style.height = `${Math.min(COMPOSER_MAX_HEIGHT_PX, Math.max(24, composer.scrollHeight))}px`
+      if (composer.style.height !== previousComposerHeight) composerGeometry.current?.()
     })
     return () => {
       if (composerFrameRef.current !== undefined) {
@@ -827,6 +870,7 @@ export function TaskDeskConversation({
         renderMessage={renderMessage}
         scrollScope={scrollScope}
         surfaceViewRevision={surfaceViewRevision}
+        composerGeometry={composerGeometry}
       />
 
       <div className="uw-composer-meta">

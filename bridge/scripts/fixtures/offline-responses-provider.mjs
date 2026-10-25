@@ -2,9 +2,10 @@ import http from "node:http"
 import { once } from "node:events"
 
 /** Only serves local synthetic Responses streams; no HTTP client or credentials exist here. */
-export async function startOfflineResponsesProvider({ items, userMarker, assistantMarker, toolCommands = [], onRequest = () => {}, messageStream = "completed" }) {
+export async function startOfflineResponsesProvider({ items, userMarker, assistantMarker, continuationMarker = assistantMarker, toolCommands = [], onRequest = () => {}, beforeComplete = async () => {}, messageStream = "completed", continuationMessageStream = messageStream }) {
   if (!Number.isInteger(items) || items < 1 || items > 40000) throw new Error("Invalid bounded offline item count")
   if (!["completed", "deltas"].includes(messageStream)) throw new Error("Invalid offline message stream")
+  if (!["completed", "deltas"].includes(continuationMessageStream)) throw new Error("Invalid offline continuation stream")
   const requests = []
   const server = http.createServer(async (request, response) => {
     try {
@@ -49,11 +50,15 @@ export async function startOfflineResponsesProvider({ items, userMarker, assista
       await emit({ type: "response.created", response: { id: responseID, object: "response", created_at: 1, status: "in_progress", output: [] } })
       const command = toolCommands[sequence - 1]
       if (command) {
-        const tool = body.tools.find((item) => ["exec_command", "shell_command"].includes(item.name))
-        if (!tool) throw new Error("Offline probe requires an advertised command tool")
-        const args = { [tool.name === "exec_command" ? "cmd" : "command"]: command.command,
+        const tools = body.tools.flatMap((tool) => tool.type === "namespace" ? (tool.tools || []).map((item) => ({ ...item, namespace: tool.name })) : [tool])
+        const qualified = (tool) => tool.namespace ? `${tool.namespace}__${tool.name}` : tool.name
+        if (command.mcpTool) summary.advertisedTools = tools.map(qualified).filter(Boolean).slice(0, 64)
+        const tool = tools.find((item) => command.mcpTool ? qualified(item) === command.mcpTool : ["exec_command", "shell_command"].includes(item.name))
+        if (!tool) throw new Error("Offline probe requires its actually advertised tool")
+        summary.requestedTool = qualified(tool)
+        const args = command.mcpTool ? {} : { [tool.name === "exec_command" ? "cmd" : "command"]: command.command,
           ...(command.escalated ? { sandbox_permissions: "require_escalated", justification: "Offline negative permission probe" } : {}) }
-        const item = { type: "function_call", id: `fc_offline_${sequence}`, call_id: `call_offline_${sequence}`, name: tool.name, arguments: JSON.stringify(args) }
+        const item = { type: "function_call", id: `fc_offline_${sequence}`, call_id: `call_offline_${sequence}`, name: tool.name, ...(tool.namespace ? { namespace: tool.namespace } : {}), arguments: JSON.stringify(args) }
         await emit({ type: "response.output_item.added", output_index: 0, item: { ...item, arguments: "" } })
         await emit({ type: "response.function_call_arguments.delta", item_id: item.id, output_index: 0, delta: item.arguments })
         await emit({ type: "response.function_call_arguments.done", item_id: item.id, output_index: 0, arguments: item.arguments })
@@ -62,14 +67,14 @@ export async function startOfflineResponsesProvider({ items, userMarker, assista
       const count = command ? 0 : toolCommands.length ? 1 : sequence === 1 ? items : 1
       for (let index = 0; index < count; index++) {
         const id = `msg_offline_${sequence}_${index}`
-        const text = index === 0 ? assistantMarker : `m${index}`
+        const text = index === 0 ? sequence === 1 ? assistantMarker : continuationMarker : `m${index}`
         const phase = index === count - 1 ? "final_answer" : "commentary"
         const part = { type: "output_text", text, annotations: [] }
         const item = { id, type: "message", role: "assistant", status: "completed", phase, content: [part] }
         // This fixture tests persisted native context, not token rendering. A finalized item
         // contains the complete text; avoid five redundant streaming events per display row.
         // Keep the delta form selectable for protocol regression comparisons.
-        if (messageStream === "deltas") {
+        if ((sequence === 1 ? messageStream : continuationMessageStream) === "deltas") {
           await emit({ type: "response.output_item.added", response_id: responseID, output_index: index, item: { ...item, status: "in_progress", content: [] } })
           await emit({ type: "response.content_part.added", item_id: id, output_index: index, content_index: 0, part: { ...part, text: "" } })
           await emit({ type: "response.output_text.delta", item_id: id, output_index: index, content_index: 0, delta: text })
@@ -79,6 +84,7 @@ export async function startOfflineResponsesProvider({ items, userMarker, assista
         await emit({ type: "response.output_item.done", output_index: index, item })
         summary.emittedItems++
       }
+      await beforeComplete(summary)
       await emit({ type: "response.completed", response: { id: responseID, object: "response", created_at: 1, status: "completed", output: [], usage: { input_tokens: 1, output_tokens: count, total_tokens: count + 1, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } } } })
       summary.completed = true
       summary.elapsedMs = Date.now() - started

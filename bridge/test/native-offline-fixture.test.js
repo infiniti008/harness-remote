@@ -7,6 +7,9 @@ import test from "node:test"
 import { inspectNativeRollout, nativeSmokeResources, preserveNativeSmokeFailure, readNativeSmokeBudget, runNativeLongResumeSmoke } from "../scripts/native-long-resume-smoke.mjs"
 import { lifecycleSignalArgs } from "../scripts/instance-lifecycle-smoke.mjs"
 import { offlineProviderConfig, startOfflineResponsesProvider } from "../scripts/fixtures/offline-responses-provider.mjs"
+import { stageOfflineGateway } from "../scripts/fixtures/offline-gateway-continuation.mjs"
+import { readonlyMcpReply } from "../scripts/fixtures/readonly-mcp-server.mjs"
+import { runNativeMcpSmoke } from "../scripts/native-mcp-smoke.mjs"
 
 test("large native smoke requires bounded aggregate cgroup limits", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "native-smoke-budget-"))
@@ -50,6 +53,73 @@ test("offline delta comparison preserves complete text and records event amplifi
     assert.equal(provider.requests[0].emittedItems, 2)
     assert.equal(provider.requests[0].emittedEvents, 14)
     assert.equal(provider.requests[0].completed, true)
+  } finally { await provider.close() }
+})
+
+test("gateway provider holds only live response completion while native context and deltas remain observable", async () => {
+  let release, held
+  const gate = new Promise((resolve) => { release = resolve })
+  const holding = new Promise((resolve) => { held = resolve })
+  const provider = await startOfflineResponsesProvider({ items: 2, userMarker: "USER", assistantMarker: "OLD", continuationMarker: "LIVE",
+    continuationMessageStream: "deltas", beforeComplete: async (summary) => { if (summary.sequence === 2) { held(); await gate } } })
+  try {
+    const post = () => fetch(provider.baseURL + "/responses", { method: "POST", body: JSON.stringify({ model: "fixture-model", stream: true, input: "USER OLD" }) })
+    const seed = await (await post()).text()
+    assert.equal(provider.requests[0].emittedEvents, 4)
+    assert.match(seed, /OLD/)
+    const response = await post()
+    const text = response.text()
+    await holding
+    assert.equal(provider.requests[1].completed, false)
+    assert.equal(provider.requests[1].emittedEvents, 7)
+    assert.equal(provider.requests[1].userMarker && provider.requests[1].assistantMarker, true)
+    release()
+    assert.match(await text, /"delta":"LIVE"/)
+    assert.equal(provider.requests[1].completed, true)
+    assert.equal(provider.requests.length, 2)
+  } finally { release(); await provider.close() }
+})
+
+test("offline gateway staging copies candidate public code and rejects an unreviewed adapter", async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "native-gateway-stage-test-"))
+  try {
+    const badArchive = path.join(temp, "unreviewed.tgz")
+    await writeFile(badArchive, "not the pinned adapter")
+    await assert.rejects(stageOfflineGateway(path.join(temp, "bad-stage"), badArchive), /reviewed codex-acp/)
+    const staged = await stageOfflineGateway(path.join(temp, "runtime"))
+    const sourceVersion = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8")).version
+    assert.equal(staged.version, sourceVersion)
+    assert.equal(await readFile(staged.entry, "utf8"), await readFile(new URL("../../distribution/run.mjs", import.meta.url), "utf8"))
+    assert.deepEqual((await readdir(path.join(temp, "runtime"))).sort(), ["bridge", "distribution", "node_modules", "package.json", "vendor"])
+    assert.equal(JSON.parse(await readFile(path.join(temp, "runtime", "vendor", "codex-acp", "package.json"), "utf8")).version, "1.13.1")
+  } finally { await rm(temp, { recursive: true, force: true }) }
+})
+
+test("readonly stdio MCP exposes only the marker tool and rejects other calls", async () => {
+  assert.equal(readonlyMcpReply({ method: "notifications/initialized" }, "marker"), undefined)
+  assert.equal(readonlyMcpReply({ id: 1, method: "initialize", params: { protocolVersion: "2025-03-26" } }, "marker").result.protocolVersion, "2025-03-26")
+  const list = readonlyMcpReply({ id: 2, method: "tools/list" }, "marker").result.tools
+  assert.equal(list.length, 1)
+  assert.equal(list[0].name, "read_marker")
+  assert.equal(list[0].annotations.readOnlyHint, true)
+  assert.equal(readonlyMcpReply({ id: 3, method: "tools/call", params: { name: "read_marker", arguments: {} } }, "marker").result.content[0].text, "marker")
+  assert.ok(readonlyMcpReply({ id: 4, method: "tools/call", params: { name: "write_file", arguments: {} } }, "marker").error)
+  assert.ok(readonlyMcpReply({ id: 5, method: "tools/call", params: { name: "read_marker", arguments: { path: "/etc/passwd" } } }, "marker").error)
+  await assert.rejects(runNativeMcpSmoke(["--items=40000"]), /Only --codex/)
+})
+
+test("offline MCP provider calls only the actual advertised namespace function", async () => {
+  const provider = await startOfflineResponsesProvider({ items: 1, userMarker: "USER", assistantMarker: "ASSISTANT", toolCommands: [{ mcpTool: "mcp__readonly_fixture__read_marker" }] })
+  try {
+    const response = await fetch(provider.baseURL + "/responses", { method: "POST", body: JSON.stringify({ model: "fixture-model", stream: true, input: "USER", tools: [
+      { type: "namespace", name: "mcp__readonly_fixture", tools: [{ type: "function", name: "read_marker", parameters: { type: "object", properties: {} } }] }
+    ] }) })
+    const events = (await response.text()).split("\n").filter((line) => line.startsWith("data: ")).map((line) => JSON.parse(line.slice(6)))
+    const call = events.find((event) => event.type === "response.output_item.done").item
+    assert.equal(call.namespace, "mcp__readonly_fixture")
+    assert.equal(call.name, "read_marker")
+    assert.equal(call.arguments, "{}")
+    assert.equal(provider.requests[0].requestedTool, "mcp__readonly_fixture__read_marker")
   } finally { await provider.close() }
 })
 

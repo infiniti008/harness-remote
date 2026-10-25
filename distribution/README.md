@@ -165,3 +165,14 @@ lifecycle test uses shell builtin signals. The bounded offline native probe adds
 diagnostics, a smaller finalized-message stream and persistent, allowlisted failure artifacts.
 All local.4 runtime policy, queue and Stop fixes remain. Do not raise the existing limits or deploy
 to working Harness/HA: large native resume, target-host sandbox and physical-device gates remain.
+
+## Continuity candidate 3.5.0-local.6
+
+See `docs/LOCAL_6_RETEST.md` and `docs/LOCAL_6_VALIDATION.md`. Health identifies its owning package,
+and release assembly verifies staged runtime metadata. Cached-tail settlement accounts for draft
+autosizing and delayed status geometry without overriding an active reader. The repeated full-app
+UI smoke exports complete frame diagnostics and screenshots to a persistent artifact directory.
+The native probe's `--gateway-continuation` mode exercises actual authenticated HTTP/SSE with native
+indexing and bounded history during a turn. `docs/MCP_SETUP.md` describes native MCP configuration
+and the actual readonly stdio integration proof. Existing limits, policy and deployment gates remain;
+the native-only40k pass does not substitute for the new real-gateway40k check on the lab host.

@@ -1,17 +1,20 @@
 // Actual app entry point, CSS shell and native controllers; only transport data is synthetic.
 // Use an isolated browser profile. No gateway, credentials or model request is used.
 import assert from 'node:assert/strict'
-import { writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { pathToFileURL } from 'node:url'
+import path from 'node:path'
 
 const cdpURL = process.env.HARNESS_UI_CDP_URL || 'http://[::1]:9223'
 const appURL = process.env.HARNESS_UI_APP_URL || 'http://127.0.0.1:4173/'
 
-function installTransport(theme) {
+function installTransport(theme, stress = false) {
   localStorage.clear()
   localStorage.setItem('opencode.remote.theme', theme)
   localStorage.setItem('opencode.remote.language', 'en')
   const config = { backend: 'codex', host: 'fixture.invalid', port: 1, username: '', password: '' }
   localStorage.setItem('harness-remote.workspace.machines.v1', JSON.stringify([{ id: 'fixture-machine', name: 'Local UI fixture', config }]))
+  if (stress) localStorage.setItem('harness-remote.taskdesk.draft.native-session-v3:fixture-machine:codex:fixture-A', 'Saved multiline draft\nSecond line\nThird line\nFourth line')
   const now = Date.now()
   const sessions = ['A', 'B'].map((key, i) => ({ id: `fixture-${key}`, title: `Cached Session ${key}`, directory: '/projects/fixture', external: true, time: { created: now - i * 1000, updated: now - i * 1000 } }))
   const agent = { id: 'codex', label: 'Codex', backend: 'codex', transport: 'acp', managed: true, state: 'available', capabilities: { sessions: true, prompt: true, abort: true, streaming: true, models: true, attachments: true }, contract: { sessions: { stop: 'owned-session-native-cancel' } } }
@@ -19,6 +22,12 @@ function installTransport(theme) {
   const transcripts = Object.fromEntries(sessions.map(session => [session.id, Array.from({ length: 200 }, (_, i) => ({ info: { id: `${session.id}-m${i}`, role: i % 2 ? 'assistant' : 'user', sessionID: session.id, time: { created: now + i } }, parts: [{ id: `${session.id}-p${i}`, type: 'text', text: `Native fixture ${session.id} message ${i + 1}.\n\nSynthetic markdown with a **real renderer**, used to check cached geometry before the first visible frame.\n\n- Detail one\n- Detail two` }] }))]))
   window.fixtureReads = {}
   window.fixtureUnknown = []
+  const streams = new Set()
+  window.fixtureAppend = () => {
+    transcripts['fixture-A'].at(-1).parts[0].text += '\n\nSynthetic external append after the reader scrolled up.'
+    const event = new TextEncoder().encode(`data: ${JSON.stringify({type:'message.updated',properties:{info:{id:'fixture-A-m199',sessionID:'fixture-A'}}})}\n\n`)
+    for (const controller of streams) controller.enqueue(event)
+  }
   const originalFetch = window.fetch.bind(window)
   window.fetch = async (input, init = {}) => {
     const url = new URL(typeof input === 'string' ? input : input.url || String(input), location.href)
@@ -26,14 +35,17 @@ function installTransport(theme) {
     const path = url.pathname
     window.fixtureReads[path] = (window.fixtureReads[path] || 0) + 1
     const json = (value, headers = {}) => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json', ...headers } })
-    if (path.endsWith('/global/event')) return new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(': connected\n\n')); init.signal?.addEventListener('abort', () => controller.close(), { once: true }) } }), { headers: { 'Content-Type': 'text/event-stream' } })
+    if (path.endsWith('/global/event')) return new Response(new ReadableStream({ start(controller) { streams.add(controller); controller.enqueue(new TextEncoder().encode(': connected\n\n')); init.signal?.addEventListener('abort', () => {streams.delete(controller); controller.close()}, { once: true }) } }), { headers: { 'Content-Type': 'text/event-stream' } })
     if (path === '/v1/machine') return json({ machine: { id: 'fixture-machine', name: 'Local UI fixture', createdAt: new Date(now).toISOString() }, agents: [agent] })
     if (path === '/v1/projects') return json({ projects: [{ id: 'fixture-project', machineId: 'fixture-machine', name: 'fixture', path: '/projects/fixture', kind: 'git', configured: true }] })
     if (path.endsWith('/experimental/session')) return json(sessions)
     if (path.endsWith('/session/status')) return json(Object.fromEntries(sessions.map(s => [s.id, { type: 'idle' }])))
     if (path.endsWith('/models')) return json({ models, stale: false, source: 'synthetic' })
     if (path.endsWith('/v1/capabilities')) return json(agent.capabilities)
-    if (path.endsWith('/account/rate_limits')) return json({ state: 'available', updatedAt: Date.now(), buckets: [{ id: 'codex', windows: [{ tier: 'primary', usedPercent: 12, windowDurationMins: 300, resetsAt: 1800000000 }, { tier: 'secondary', usedPercent: 34, windowDurationMins: 10080, resetsAt: 1800000000 }] }] })
+    if (path.endsWith('/account/rate_limits')) {
+      if (stress) await new Promise(resolve => setTimeout(resolve, 85))
+      return json({ state: 'available', updatedAt: Date.now(), buckets: [{ id: 'codex', windows: [{ tier: 'primary', usedPercent: 12, windowDurationMins: 300, resetsAt: 1800000000 }, { tier: 'secondary', usedPercent: 34, windowDurationMins: 10080, resetsAt: 1800000000 }] }] })
+    }
     const message = path.match(/\/session\/([^/]+)\/message$/)
     if (message) {
       // A cached reopen must paint correctly while this revision revalidation is still pending.
@@ -70,7 +82,10 @@ function connect(url) {
   }
 }
 
-async function run(width, height, theme, touch = width < 500) {
+export async function run(width, height, theme, touch = width < 500, options = {}) {
+  const outputDir = options.outputDir || process.env.HARNESS_UI_ARTIFACTS_DIR || '/tmp'
+  if (!path.isAbsolute(outputDir)) throw new Error('HARNESS_UI_ARTIFACTS_DIR must be absolute')
+  await mkdir(outputDir, { recursive: true })
   const version = await fetch(`${cdpURL}/json/version`).then(r => r.json())
   const browser = connect(version.webSocketDebuggerUrl)
   await browser.ready
@@ -84,7 +99,7 @@ async function run(width, height, theme, touch = width < 500) {
     await client.call('Runtime.enable')
     await client.call('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: touch })
     await client.call('Emulation.setTouchEmulationEnabled', { enabled: touch, maxTouchPoints: 1 })
-    await client.call('Page.addScriptToEvaluateOnNewDocument', { source: `(${installTransport.toString()})(${JSON.stringify(theme)})` })
+    await client.call('Page.addScriptToEvaluateOnNewDocument', { source: `(${installTransport.toString()})(${JSON.stringify(theme)},${Boolean(options.stress)})` })
     await client.call('Page.navigate', { url: appURL })
     const evaluate = async expression => {
       const result = await client.call('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, userGesture: true })
@@ -100,7 +115,7 @@ async function run(width, height, theme, touch = width < 500) {
       await open('A'); await wait(200); await open('B'); await wait(100);
       back();
       const frames=[]; const started=performance.now(); let done=false;
-      const measure=()=> { const t=document.querySelector('.uw-transcript'); if(t?.textContent.includes('fixture-A message 200')) frames.push({ms:Math.round(performance.now()-started),top:t.scrollTop,bottom:t.scrollHeight-t.clientHeight,visible:!!t.getClientRects().length}); if(!done)requestAnimationFrame(measure); };
+      const measure=()=> { const t=document.querySelector('.uw-transcript'); if(t?.textContent.includes('fixture-A message 200')) frames.push({ms:Math.round(performance.now()-started),top:t.scrollTop,bottom:t.scrollHeight-t.clientHeight,client:t.clientHeight,height:t.scrollHeight,composer:document.querySelector('.uw-composer-shell').getBoundingClientRect().height,meta:document.querySelector('.uw-composer-meta').getBoundingClientRect().height,visible:!!t.getClientRects().length}); if(!done)requestAnimationFrame(measure); };
       requestAnimationFrame(measure); row('A').click(); await wait(1500); done=true;
       const textarea=document.querySelector('.uw-composer-shell textarea'); textarea.focus(); await wait(50);
       const focus={shadow:getComputedStyle(textarea).boxShadow,outline:getComputedStyle(textarea).outlineStyle, outer:getComputedStyle(textarea.closest('.uw-composer-shell')).borderColor};
@@ -109,7 +124,12 @@ async function run(width, height, theme, touch = width < 500) {
       // Same-session explicit activation is also covered, then a passive refresh must preserve reading.
       back(); row('A').click(); await wait(100);
       const sameSession={top:transcript.scrollTop,bottom:transcript.scrollHeight-transcript.clientHeight};
-      transcript.scrollTo({top:0,behavior:'instant'}); await wait(900);
+      transcript.scrollTo({top:0,behavior:'instant'}); await wait(100);
+      const messageRoute='/v1/agents/codex/session/fixture-A/message';
+      const beforeRefresh=window.fixtureReads[messageRoute]; window.fixtureAppend();
+      await until(()=>window.fixtureReads[messageRoute]>beforeRefresh);
+      await until(()=>transcript.textContent.includes('Synthetic external append'));
+      await wait(50);
       const readerTop=transcript.scrollTop;
       const file=document.querySelector('input[type=file]');
       const canvas=document.createElement('canvas'); canvas.width=8; canvas.height=8; const context=canvas.getContext('2d'); context.fillStyle='#2468ee';context.fillRect(0,0,8,8);
@@ -125,8 +145,13 @@ async function run(width, height, theme, touch = width < 500) {
       const menu={left:panel.left,right:panel.right,top:panel.top,bottom:panel.bottom,actions,labelsAligned:Math.max(...labels)-Math.min(...labels)<=1,withinViewport:panel.left>=0&&panel.right<=innerWidth&&panel.top>=0&&panel.bottom<=innerHeight};
       return {frames,focus,sameSession,readerTop,attachmentSize,menu,unknown:window.fixtureUnknown,reads:window.fixtureReads,overflow:document.documentElement.scrollWidth>innerWidth};
     })()`)
-    console.log(JSON.stringify({ width, height, theme, ...result, frames: {count:result.frames.length,first:result.frames[0],last:result.frames.at(-1),awayFromTail:result.frames.filter(f=>f.visible&&Math.abs(f.top-f.bottom)>1).length} }))
-    await writeFile(`/tmp/local5-workspace-${theme}-${width}.png`, Buffer.from((await client.call('Page.captureScreenshot', { format: 'png' })).data, 'base64'))
+    const badFrames = result.frames.filter(f=>f.visible&&Math.abs(f.top-f.bottom)>1)
+    const summary = { width, height, theme, stress: Boolean(options.stress), round:options.round || 1, ...result, frames: {count:result.frames.length,first:result.frames[0],last:result.frames.at(-1),awayFromTail:badFrames.length,bad:badFrames.slice(0,20)} }
+    console.log(JSON.stringify(summary))
+    const prefix = options.prefix || 'local5-workspace'
+    const name = `${prefix}-${theme}-${width}-r${options.round || 1}`
+    await writeFile(path.join(outputDir,`${name}.json`), JSON.stringify({...summary, frames:result.frames}))
+    await writeFile(path.join(outputDir,`${name}.png`), Buffer.from((await client.call('Page.captureScreenshot', { format: 'png' })).data, 'base64'))
     assert.deepEqual(client.exceptions, [])
     assert.equal(result.overflow, false)
     assert.equal(result.focus.shadow, 'none')
@@ -140,6 +165,7 @@ async function run(width, height, theme, touch = width < 500) {
     assert.equal(result.attachmentSize.removeHeight, 24)
     assert.equal(result.menu.labelsAligned, true, 'menu labels must share the same column')
     assert.equal(result.menu.withinViewport, true)
+    return summary
   } finally {
     client.close()
     await browser.call('Target.disposeBrowserContext', { browserContextId }).catch(()=>{})
@@ -147,4 +173,6 @@ async function run(width, height, theme, touch = width < 500) {
   }
 }
 
-for (const viewport of [[1440,900,'light'],[390,844,'light'],[1024,768,'light'],[844,390,'light',true],[1440,900,'dark'],[390,844,'dark']]) await run(...viewport)
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  for (const viewport of [[1440,900,'light'],[390,844,'light'],[1024,768,'light'],[844,390,'light',true],[1440,900,'dark'],[390,844,'dark']]) await run(...viewport)
+}

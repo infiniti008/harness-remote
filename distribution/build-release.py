@@ -80,6 +80,8 @@ def main():
         raise RuntimeError('Build and test web/dist before packaging')
     package = json.loads((ROOT / 'package.json').read_text())
     version = package['version']
+    if json.loads((ROOT / 'web/package.json').read_text())['version'] != version:
+        raise RuntimeError('Gateway and web package versions must agree before packaging')
     commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     epoch = int(subprocess.check_output(['git', 'show', '-s', '--format=%ct', 'HEAD'], cwd=ROOT, text=True))
     out = ROOT / 'release' / version
@@ -98,7 +100,7 @@ def main():
         shutil.copytree(ROOT / 'web/dist', stage / 'web')
         (stage / 'distribution').mkdir()
         (stage / 'docs').mkdir()
-        for name in ['LOCAL_2_RETEST.md', 'LOCAL_2_VALIDATION.md', 'COMPACT_WORKSPACE.md', 'LOCAL_4_NATIVE_SAFETY.md', 'LOCAL_4_RETEST.md', 'LOCAL_4_VALIDATION.md', 'LOCAL_5_RETEST.md', 'LOCAL_5_VALIDATION.md']:
+        for name in ['LOCAL_2_RETEST.md', 'LOCAL_2_VALIDATION.md', 'COMPACT_WORKSPACE.md', 'LOCAL_4_NATIVE_SAFETY.md', 'LOCAL_4_RETEST.md', 'LOCAL_4_VALIDATION.md', 'LOCAL_5_RETEST.md', 'LOCAL_5_VALIDATION.md', 'LOCAL_6_RETEST.md', 'LOCAL_6_VALIDATION.md', 'MCP_SETUP.md']:
             shutil.copy2(ROOT / 'docs' / name, stage / 'docs' / name)
         (stage / 'docs/previews').mkdir()
         for name in ['compact-desktop.png', 'compact-phone.png', 'local4-desktop.png', 'local4-phone.png', 'local5-menu-desktop.png', 'local5-menu-phone.png']:
@@ -110,6 +112,14 @@ def main():
         extract_package(verified_package('codex-acp'), stage / 'vendor/codex-acp', {'dist/index.js', 'package.json', 'LICENSE', 'README.md'})
         (stage / 'release.json').write_text(json.dumps(manifest, indent=2) + '\n')
         (stage / 'web/release.json').write_text(json.dumps(manifest, indent=2) + '\n')
+        # Check the runtime module from the actual staged layout, not another hardcoded version.
+        health = json.loads(subprocess.check_output([
+            'node', '--input-type=module', '-e',
+            'const {LOCAL_RELEASE_INFO}=await import(process.argv[1]);console.log(JSON.stringify(LOCAL_RELEASE_INFO))',
+            (stage / 'bridge/src/local-release-info.js').as_uri()
+        ], cwd=stage, text=True))
+        if health != {'harnessVersion': version, 'releaseChannel': manifest['channel'], 'historyProtocol': manifest['historyProtocol']}:
+            raise RuntimeError('Staged authenticated health metadata disagrees with release manifest')
         pack(stage, out / f'harness-local-{version}.tgz', f'harness-local-{version}', epoch)
         pack(stage / 'web', out / f'harness-web-{version}.tgz', f'harness-web-{version}', epoch)
     (out / 'release.json').write_text(json.dumps(manifest, indent=2) + '\n')

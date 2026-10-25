@@ -103,7 +103,7 @@ async function runViewport(width, height, mobile, theme) {
     const panel = document.querySelector('.uw-image-lightbox');
     const rect = panel.getBoundingClientRect();
     const topElement = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
-    const lightbox = { portaledToBody: backdrop.parentElement === document.body, backdropColor: getComputedStyle(backdrop).backgroundColor, panelColor: getComputedStyle(panel).backgroundColor, panelOnTopAtCenter: panel.contains(topElement), focusInside: panel.contains(document.activeElement), zIndex: getComputedStyle(backdrop).zIndex };
+    const lightbox = { portaledToChat: backdrop.parentElement === document.querySelector('.uw-conversation-core'), backdropColor: getComputedStyle(backdrop).backgroundColor, panelColor: getComputedStyle(panel).backgroundColor, panelOnTopAtCenter: panel.contains(topElement), focusInside: panel.contains(document.activeElement), zIndex: getComputedStyle(backdrop).zIndex };
     document.querySelector('.uw-image-lightbox-close').click();
     await waitFor(() => !document.querySelector('.uw-image-lightbox'));
     const edit = [...document.querySelectorAll('.uw-queued-prompt-action')].find(button => button.textContent.trim() === 'Edit');
@@ -135,7 +135,7 @@ for (const viewport of [[1440, 900, false, "light"], [390, 844, true, "light"], 
   assert.equal(result.focus.outline, "none")
   assert.equal(result.focus.borderWidth, "0px")
   assert.equal(result.quotaPopoverBounds.withinViewport, true, "quota popover must stay within viewport")
-  assert.equal(result.lightbox.portaledToBody, true)
+  assert.equal(result.lightbox.portaledToChat, true)
   assert.equal(result.lightbox.panelOnTopAtCenter, true)
   assert.equal(result.lightbox.focusInside, true)
   assert.ok(result.queueFit.every(row => row.scrollWidth <= row.width + 1), "queued actions must fit")

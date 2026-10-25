@@ -44,9 +44,8 @@ function Fixture() {
       footerHint="New messages wait in the queue"
       composerControls={<div className="uw-composer-routing"><label><span>Harness</span><select aria-label="Harness"><option>PI</option><option>Codex</option></select></label><label className="uw-composer-model"><span>Model</span><ModelPicker compact models={[model]} value="fixture|model|" onChange={()=>{}}/></label></div>}
       composerStatus={<><CodexRateLimitsStatus config={config} agentID="codex"/><span className="tdw-conversation-state" title="Ready" aria-label="Ready"><i aria-hidden="true">●</i><span>Ready</span></span></>}
-      renderMessage={message=><div style={{padding:"12px 6px",color:"var(--td3-text)"}}>{message.parts[0]?.text}{message.info.id==="m59"?<button className="uw-message-attachment-open" onClick={()=>setLightbox(true)}>View synthetic image</button>:null}</div>}
+      renderMessage={message=><div style={{padding:"12px 6px",color:"var(--td3-text)"}}>{message.parts[0]?.text}{message.info.id==="m59"?<><button className="uw-message-attachment-open" onClick={()=>setLightbox(true)}>View synthetic image</button>{lightbox?<ImageLightbox src={png} label="Synthetic image" onClose={()=>setLightbox(false)}/>:null}</>:null}</div>}
     /></div>
-    {lightbox?<ImageLightbox src={png} label="Synthetic image" onClose={()=>setLightbox(false)}/>:null}
   </div>
 }
 createRoot(document.getElementById("root")!).render(<Fixture/> )

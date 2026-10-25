@@ -8,7 +8,7 @@ import path from 'node:path'
 const cdpURL = process.env.HARNESS_UI_CDP_URL || 'http://[::1]:9223'
 const appURL = process.env.HARNESS_UI_APP_URL || 'http://127.0.0.1:4173/'
 
-function installTransport(theme, stress = false) {
+export function installTransport(theme, stress = false, imagePreview = false) {
   localStorage.clear()
   localStorage.setItem('opencode.remote.theme', theme)
   localStorage.setItem('opencode.remote.language', 'en')
@@ -20,6 +20,12 @@ function installTransport(theme, stress = false) {
   const agent = { id: 'codex', label: 'Codex', backend: 'codex', transport: 'acp', managed: true, state: 'available', capabilities: { sessions: true, prompt: true, abort: true, streaming: true, models: true, attachments: true }, contract: { sessions: { stop: 'owned-session-native-cancel' } } }
   const models = [{ providerID: 'codex', providerName: 'Codex', modelID: 'fixture-model', modelName: 'Fixture model', isDefault: true, tools: true }]
   const transcripts = Object.fromEntries(sessions.map(session => [session.id, Array.from({ length: 200 }, (_, i) => ({ info: { id: `${session.id}-m${i}`, role: i % 2 ? 'assistant' : 'user', sessionID: session.id, time: { created: now + i } }, parts: [{ id: `${session.id}-p${i}`, type: 'text', text: `Native fixture ${session.id} message ${i + 1}.\n\nSynthetic markdown with a **real renderer**, used to check cached geometry before the first visible frame.\n\n- Detail one\n- Detail two` }] }))]))
+  if (imagePreview) {
+    const canvas = document.createElement('canvas'); canvas.width = 1200; canvas.height = 1800
+    const ctx = canvas.getContext('2d'); ctx.fillStyle = '#2468ee'; ctx.fillRect(0, 0, 1200, 1800)
+    ctx.fillStyle = '#fff'; ctx.font = '60px sans-serif'; ctx.fillText('Local image preview', 80, 150)
+    transcripts['fixture-A'][198].parts.push({ id: 'fixture-image', type: 'file', mime: 'image/png', filename: 'preview.png', url: canvas.toDataURL('image/png') })
+  }
   window.fixtureReads = {}
   window.fixtureUnknown = []
   const streams = new Set()
@@ -61,7 +67,7 @@ function installTransport(theme, stress = false) {
   }
 }
 
-function connect(url) {
+export function connect(url) {
   const socket = new WebSocket(url)
   let id = 0
   const pending = new Map()

@@ -1,6 +1,8 @@
 @import "./work-thread-detail.css";
 
 .uw-conversation-core {
+  position: relative;
+  isolation: isolate;
   min-width: 0;
   min-height: 0;
   flex: 1;
@@ -589,7 +591,7 @@
 
 /* Clicking a sent image thumbnail raises a small, centered lightbox for a full-size view. The image
    is a data: URL on the part, so it needs no network — and on the plain-HTTP LAN the app runs on that
-   is the only always-available path. z-index 1300 sits above the fixed pairing toast (z-index 1200). */
+   is the only always-available path. The overlay is local to the chat's isolated stacking context. */
 .uw-message-attachment-open {
   margin: 0;
   padding: 0;
@@ -607,12 +609,13 @@
 }
 
 .uw-image-lightbox-backdrop {
-  position: fixed;
+  position: absolute;
   inset: 0;
   z-index: 1300;
   display: grid;
   place-items: center;
   padding: 20px;
+  overflow: hidden;
   background: color-mix(in srgb, var(--td3-panel) 92%, black);
 }
 
@@ -621,8 +624,11 @@
   display: flex;
   flex-direction: column;
   gap: 9px;
-  max-width: min(96vw, 820px);
-  max-height: 92vh;
+  min-width: 0;
+  min-height: 0;
+  max-width: min(100%, 820px);
+  max-height: 100%;
+  box-sizing: border-box;
   padding: 12px;
   border: 1px solid var(--td3-border-strong);
   border-radius: 14px;
@@ -635,7 +641,9 @@
 .uw-image-lightbox-image {
   display: block;
   max-width: 100%;
-  max-height: 74vh;
+  min-height: 0;
+  max-height: 100%;
+  flex: 0 1 auto;
   margin: 0 auto;
   object-fit: contain;
   border-radius: 8px;

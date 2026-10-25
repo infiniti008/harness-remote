@@ -239,7 +239,7 @@ export async function runNativeEndurance(argv = process.argv.slice(2)) {
       const rootIdentity = await processInfo(gateway.pid)
       assert.ok(rootIdentity, "gateway did not start")
       tracked.set(gateway.pid, rootIdentity.startTime)
-      await until(async () => { assert.equal(gatewayExited, false, gatewayStderr); try { return (await readJSON(`${scoped}/v1/health`)).harnessVersion === "3.5.0-local.6" } catch { return false } }, 15000)
+      await until(async () => { assert.equal(gatewayExited, false, gatewayStderr); try { return (await readJSON(`${scoped}/v1/health`)).harnessVersion === staged.version } catch { return false } }, 15000)
       const diag = await diagnostics()
       assert.equal(diag.services.codex.promptIdleTimeoutMs, idleMs || 1800000)
     }

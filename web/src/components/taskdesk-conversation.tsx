@@ -6,6 +6,7 @@ import { AlertIcon, ChatIcon, CloseIcon, JumpToBottomIcon, JumpToTopIcon, Loadin
 import "../taskdesk-conversation.css"
 import "../taskdesk-history-loader.css"
 import { TaskDeskMessageContent } from "./taskdesk-message-content"
+import { ConversationImageSurface } from "./image-lightbox"
 
 const HARNESS_ICON_FILES: Record<string, string> = {
   codex: "codex.svg",
@@ -851,7 +852,7 @@ export function TaskDeskConversation({
   }
 
   return (
-    <div className="uw-conversation-core">
+    <ConversationImageSurface>
       <ConversationTranscript
         messages={messages}
         agentLabel={agentLabel}
@@ -1109,6 +1110,6 @@ export function TaskDeskConversation({
           </div>
         </div>
       </div>
-    </div>
+    </ConversationImageSurface>
   )
 }

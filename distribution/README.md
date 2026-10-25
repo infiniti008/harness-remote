@@ -176,3 +176,11 @@ The native probe's `--gateway-continuation` mode exercises actual authenticated 
 indexing and bounded history during a turn. `docs/MCP_SETUP.md` describes native MCP configuration
 and the actual readonly stdio integration proof. Existing limits, policy and deployment gates remain;
 the native-only40k pass does not substitute for the new real-gateway40k check on the lab host.
+
+## Chat-scoped image preview (local.7)
+
+Image viewing now occupies only the transcript/composer area. The Session header and surrounding
+navigation remain accessible; Escape, close, background click, focus restoration and rotation are
+covered by a production-app browser probe. See [LOCAL_7_RETEST.md](../docs/LOCAL_7_RETEST.md) for
+screenshots, validation and the isolated lab update procedure. Existing native/resource/sandbox
+acceptance gates remain separate. The local.6 release is preserved unchanged.

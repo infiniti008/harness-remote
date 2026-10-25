@@ -132,15 +132,13 @@ test("a sent image opens a centered lightbox for a full-size view", () => {
   assert.match(content, /onClick=\{\(\) => setPreview\(true\)\}/)
   assert.match(content, /<ImageLightbox src=\{imageUrl\} label=\{label\}/)
 
-  // The lightbox is a fixed, centered module built on the shell's shared dialog machinery — a backdrop
-  // that closes on its own click, a role="dialog" panel, and useDialogDismiss for Escape / focus-trap /
-  // return of focus — stacked above the pairing toast (z-index 1200).
-  assert.match(lightbox, /useDialogDismiss/)
+  // The preview belongs to the chat. Navigation outside it stays available, including keyboard focus.
+  assert.match(lightbox, /useContext\(ImagePreviewSurface\)/)
+  assert.match(lightbox, /\), surface\)/)
   assert.match(lightbox, /role="dialog"/)
-  assert.match(lightbox, /aria-modal="true"/)
+  assert.doesNotMatch(lightbox, /aria-modal="true"|\), document\.body\)/)
   assert.match(lightbox, /onMouseDown=\{onClose\}/)
   const backdrop = conversationCss.match(/\.uw-image-lightbox-backdrop \{[^}]*\}/)
   assert.ok(backdrop, "the lightbox backdrop must be defined")
-  assert.match(backdrop[0], /position: fixed/)
-  assert.ok(/z-index:\s*1300/.test(conversationCss), "the lightbox must sit above the pairing toast (z-index 1200)")
+  assert.match(backdrop[0], /position: absolute/)
 })

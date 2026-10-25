@@ -100,10 +100,10 @@ def main():
         shutil.copytree(ROOT / 'web/dist', stage / 'web')
         (stage / 'distribution').mkdir()
         (stage / 'docs').mkdir()
-        for name in ['LOCAL_2_RETEST.md', 'LOCAL_2_VALIDATION.md', 'COMPACT_WORKSPACE.md', 'LOCAL_4_NATIVE_SAFETY.md', 'LOCAL_4_RETEST.md', 'LOCAL_4_VALIDATION.md', 'LOCAL_5_RETEST.md', 'LOCAL_5_VALIDATION.md', 'LOCAL_6_RETEST.md', 'LOCAL_6_VALIDATION.md', 'MCP_SETUP.md']:
+        for name in ['LOCAL_2_RETEST.md', 'LOCAL_2_VALIDATION.md', 'COMPACT_WORKSPACE.md', 'LOCAL_4_NATIVE_SAFETY.md', 'LOCAL_4_RETEST.md', 'LOCAL_4_VALIDATION.md', 'LOCAL_5_RETEST.md', 'LOCAL_5_VALIDATION.md', 'LOCAL_6_RETEST.md', 'LOCAL_6_VALIDATION.md', 'MCP_SETUP.md', 'LOCAL_6_ENDURANCE.md', 'LOCAL_7_RETEST.md']:
             shutil.copy2(ROOT / 'docs' / name, stage / 'docs' / name)
         (stage / 'docs/previews').mkdir()
-        for name in ['compact-desktop.png', 'compact-phone.png', 'local4-desktop.png', 'local4-phone.png', 'local5-menu-desktop.png', 'local5-menu-phone.png']:
+        for name in ['compact-desktop.png', 'compact-phone.png', 'local4-desktop.png', 'local4-phone.png', 'local5-menu-desktop.png', 'local5-menu-phone.png', 'local7-image-desktop.png', 'local7-image-phone.png']:
             shutil.copy2(ROOT / 'docs/previews' / name, stage / 'docs/previews' / name)
         shutil.copy2(ROOT / 'distribution/run.mjs', stage / 'distribution/run.mjs')
         shutil.copy2(ROOT / 'distribution/harness-remote.service', stage / 'distribution/harness-remote.service')

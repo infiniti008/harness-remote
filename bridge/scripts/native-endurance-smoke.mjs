@@ -81,6 +81,28 @@ export async function runNativeEndurance(argv = process.argv.slice(2)) {
   const status = async () => (await readJSON(`${scoped}/session/status`))[threadID]?.type
   const diagnostics = () => readJSON("/v1/diagnostics")
   const prompts = (d) => d.agents.find((a) => a.id === "codex")?.process?.pendingRequests?.filter((r) => r.method === "session/prompt") ?? []
+  // Capture before releasing a held response or shutting down: teardown used to erase the very
+  // pending state needed to distinguish a stuck NEXT from an unconfirmed Stop. No transcript,
+  // native argv/environment, model input, authentication headers or raw error bodies are saved.
+  const captureState = async (label) => {
+    const get = async (endpoint) => {
+      try {
+        const response = await fetch(base + endpoint, { headers: { Authorization: authorization }, signal: AbortSignal.timeout(1500) })
+        return response.ok ? await response.json() : { httpStatus: response.status }
+      } catch (error) { return { unavailable: true, errorName: error.name } }
+    }
+    const [diag, statuses] = await Promise.all([get("/v1/diagnostics"), get(`${scoped}/session/status`)])
+    const process = diag.agents?.find((agent) => agent.id === "codex")?.process
+    const service = diag.services?.codex
+    const pick = (source, keys) => source && Object.fromEntries(keys.filter((key) => source[key] !== undefined).map((key) => [key, source[key]]))
+    return { label, phase, at: new Date().toISOString(), gatewayExited,
+      process: pick(process, ["state", "processID", "startInFlight", "pendingRequestCount", "oldestPendingMs", "pendingRequests"]),
+      service: pick(service, ["activeSessions", "queuedSessions", "inFlightLoads", "snapshotWrites", "promptIdleTimeoutMs"]),
+      sessionStatus: statuses[threadID],
+      diagnosticsUnavailable: pick(diag, ["httpStatus", "unavailable", "errorName"]),
+      statusUnavailable: pick(statuses, ["httpStatus", "unavailable", "errorName"]),
+      ...(budget.enforced ? { cgroup: await cgroupResources() } : {}) }
+  }
   const until = async (fn, limit = 10000) => {
     const end = Date.now() + Math.min(limit, remaining())
     while (Date.now() < end) { if (await fn()) return; await delay(25) }
@@ -125,7 +147,9 @@ export async function runNativeEndurance(argv = process.argv.slice(2)) {
   }
   const idleSample = async (label) => { await until(async () => await status() === "idle" && prompts(await diagnostics()).length === 0); await delay(250); return snapshot(label) }
   const quick = async (label) => {
+    note("next_submit", { label })
     const p = plan("quick", label); await send(p)
+    note("next_wait", { label })
     await until(async () => await status() === "idle" && textIncludes(await messages(), `DONE_${p.marker}`))
     assert.equal(p.requests, 1, "a next prompt must issue exactly one provider request")
     return p
@@ -253,12 +277,18 @@ export async function runNativeEndurance(argv = process.argv.slice(2)) {
       await send(p)
       if (i % 2 === 1) await until(() => p.requests === 1)
       await delay([0, 25, 100, 250, 600][i % 5])
-      await readJSON(`${route()}/abort`, { method: "POST", body: "{}" }); p.release()
+      note("stop_confirm", { cycle: i + 1 })
+      const stopStarted = Date.now()
+      const stopResponse = await readJSON(`${route()}/abort`, { method: "POST", body: "{}" })
+      const stopMs = Date.now() - stopStarted
+      report.lastConfirmedStop = { cycle: i + 1, stopMs, confirmed: stopResponse === true }
+      p.release()
+      note("after_stop_idle", { cycle: i + 1 })
       await idleSample(`after_stop_${i + 1}`)
       await quick(`NEXT_${i}`)
       const idle = await idleSample(`after_next_${i + 1}`)
       assert.equal(prompts(await diagnostics()).length, 0)
-      report.cycles.push({ cycle: i + 1, providerStarted: p.requests > 0, idleTasks: idle.tasks, idleProcessCount: idle.processCount, idleRssKiB: idle.rssKiB })
+      report.cycles.push({ cycle: i + 1, stopMs, providerStarted: p.requests > 0, idleTasks: idle.tasks, idleProcessCount: idle.processCount, idleRssKiB: idle.rssKiB })
     }
     report.afterCycles = await idleSample("after_cycles")
     report.activeStopCycles = report.cycles.filter((c) => c.providerStarted).length
@@ -309,6 +339,12 @@ export async function runNativeEndurance(argv = process.argv.slice(2)) {
     report.status = "passed"
   } catch (error) {
     report.status = "failed"; report.error = error.stack; report.failedPhase = phase; report.gatewayStderr = gatewayStderr
+    if (base && gateway && !gatewayExited) {
+      report.failureState = await captureState("before_cleanup").catch((failure) => ({ unavailable: true, errorName: failure.name }))
+      await snapshot("failure_before_cleanup").catch((failure) => { report.failureSamplingError = failure.name })
+      await writeFile(path.join(artifacts, "failure-state.json"), JSON.stringify(report.failureState, null, 2), { mode: 0o600, flag: "wx" })
+        .catch((failure) => { report.failureArtifactError = failure.name })
+    }
     throw error
   } finally {
     clearTimeout(watchdog); clearInterval(sampler)

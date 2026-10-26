@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { findCodexExecutable } from "../bridge/src/executable-discovery.js"
 import { inspectCodexIndex } from "../bridge/src/codex-index-preflight.js"
+import { inspectRuntimeResourceLimits } from "../bridge/src/runtime-resource-limits.js"
 import { homedir } from "node:os"
 import path from "node:path"
 
@@ -15,6 +16,11 @@ if (args.includes("--version")) {
 } else if (args.includes("--help")) {
   console.log(`Harness Remote local candidate ${metadata.version}\nUsage: node distribution/run.mjs [daemon options]\n--check validates installed prerequisites without starting a gateway.\nThis candidate uses Codex 0.163.0 and bundled codex-acp 1.13.1.\nCODEX_HOME is inherited unchanged. Configure a separate --state-dir explicitly.`)
 } else {
+  const resourceLimits = await inspectRuntimeResourceLimits()
+  const developmentOverride = process.env.HARNESS_ALLOW_UNBOUNDED_DEVELOPMENT === "1"
+  if (!args.includes("--check") && !resourceLimits.enforced && !developmentOverride) {
+    throw new Error(`Resource isolation required before startup: ${resourceLimits.reason}. Use the bounded container/systemd deployment; do not launch inside the SSH app.`)
+  }
   const codex = findCodexExecutable()
   const adapter = fileURLToPath(new URL("vendor/codex-acp/dist/index.js", root))
   let codexVersion = "unavailable"
@@ -26,9 +32,9 @@ if (args.includes("--version")) {
   })
   const check = {
     harness: metadata.version, node: process.versions.node, codex: codexVersion,
-    nativeIndex,
+    nativeIndex, resourceLimits, developmentOverride,
     bundledAdapter: existsSync(adapter),
-    compatible: process.versions.node === "24.21.0" && /\b0\.163\.0\b/.test(codexVersion) && existsSync(adapter) && nativeIndex.ready
+    compatible: process.versions.node === "24.21.0" && /\b0\.163\.0\b/.test(codexVersion) && existsSync(adapter) && nativeIndex.ready && (resourceLimits.enforced || developmentOverride)
   }
   if (args.includes("--check")) {
     console.log(JSON.stringify(check, null, 2))

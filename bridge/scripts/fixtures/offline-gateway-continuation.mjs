@@ -62,6 +62,7 @@ export async function continueThroughOfflineGateway({ temp, home, workspace, exe
   const gateway = spawn(development ? "prlimit" : process.execPath, development ? ["--as=1073741824", "--cpu=10", "--", process.execPath, ...nodeArgs] : nodeArgs, {
     cwd: workspace, detached: true, stdio: ["ignore", "pipe", "pipe"],
     env: { PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: home, CODEX_HOME: home, CODEX_PATH: native,
+      ...(development ? { HARNESS_ALLOW_UNBOUNDED_DEVELOPMENT: "1" } : {}),
       TMPDIR: path.join(home, "tmp"), LANG: "C.UTF-8", TOKIO_WORKER_THREADS: "2", RAYON_NUM_THREADS: "1", UV_THREADPOOL_SIZE: "1",
       NODE_OPTIONS: "--v8-pool-size=1 --max-old-space-size=96 --disable-wasm-trap-handler", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0", GIT_ALLOW_PROTOCOL: "file",
       HARNESS_REMOTE_USERNAME: "offline-fixture", HARNESS_REMOTE_PASSWORD: password }

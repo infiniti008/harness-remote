@@ -184,3 +184,27 @@ navigation remain accessible; Escape, close, background click, focus restoration
 covered by a production-app browser probe. See [LOCAL_7_RETEST.md](../docs/LOCAL_7_RETEST.md) for
 screenshots, validation and the isolated lab update procedure. Existing native/resource/sandbox
 acceptance gates remain separate. The local.6 release is preserved unchanged.
+
+## Core profile candidate (local.8)
+
+Codex starts with native plugins, apps and tool_suggest discovery disabled, and the same overrides
+apply to thread start/resume/fork. This mitigates a reported native 0.163.0 pre-inference discovery
+hang; it does not establish the cause of the intermittent local.7 live NEXT failure. Explicit MCP,
+ordinary workspace commands, skills, model/provider selection and the Never permission policy
+remain. User configuration files and native history are not rewritten. The matching release
+manifest identifies this core profile.
+
+Authenticated `GET /v1/agents/codex/session/<id>/execution` reads bounded event/timing metadata
+through the existing native connection. It does not prompt/load/resume a Session, start another
+Codex process, store message/provider text, or cancel slow work. Capture it before stopping a
+stalled turn. See [LOCAL_8_RETEST.md](../docs/LOCAL_8_RETEST.md) for the focused live acceptance and
+[HA_DEPLOYMENT_PATH.md](../docs/HA_DEPLOYMENT_PATH.md) for deployment boundaries. A passing cache
+soak or a synthetic transport test does not certify live ChatGPT transport or an HA installation.
+
+The packaged launcher now refuses startup without visible Linux cgroup v2 limits of at most
+1 GiB memory, zero swap, one CPU and 128 PIDs, including inherited visible ancestor limits.
+`--check` reports these as `resourceLimits`; deployment acceptance requires `enforced=true` and
+`developmentOverride=false`. The launcher inspects limits read-only and never changes host cgroups.
+An unsupported/unlimited SSH app or host is refused before starting native Codex. The diagnostic
+fixtures explicitly use `HARNESS_ALLOW_UNBOUNDED_DEVELOPMENT=1` only with `--development-small` on
+shared development hosts; that opt-out is not a production or HA installation instruction.

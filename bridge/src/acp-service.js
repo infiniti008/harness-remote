@@ -1586,6 +1586,12 @@ export class AcpService {
     return this.#acp.request("_account/rate_limits", {}, 5_000)
   }
 
+  async readNativeExecution(sessionID) {
+    const native = await this.#acp.request("_harness/native_status", {}, 5_000)
+    return { profile: native.profile, disabledDiscoveryFeatures: native.disabledDiscoveryFeatures,
+      observedAt: native.observedAt, execution: native.sessions?.find((session) => session.threadID === sessionID) ?? null }
+  }
+
   #checkPromptable(sessionID, epoch) {
     const stopping = this.#stops.has(sessionID) || this.#acp.isSessionStopping?.(sessionID)
     if (stopping || epoch !== (this.#stopEpochs.get(sessionID) ?? 0)) {

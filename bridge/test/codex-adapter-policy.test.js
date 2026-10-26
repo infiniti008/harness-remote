@@ -32,7 +32,7 @@ test("real codex-acp native chain cannot auto-review a failed sandbox or switch 
       args: ["--v8-pool-size=1", "--max-old-space-size=96", fileURLToPath(new URL("../src/codex-adapter-entry.js", import.meta.url)), path.join(temp, "package/dist/index.js")],
       cwd: temp, authenticate: false,
       environment: { CODEX_PATH: native, CODEX_HOME: temp, HOME: temp, NATIVE_POLICY_LOG: logFile, NATIVE_POLICY_ESCAPE: escapedFile,
-        INITIAL_AGENT_MODE: "agent-full-access", CODEX_CONFIG: JSON.stringify({ approval_policy: "on-request", approvals_reviewer: "auto_review", sandbox_mode: "danger-full-access", sandbox_workspace_write: { network_access: true, writable_roots: ["/"] } }) }
+        INITIAL_AGENT_MODE: "agent-full-access", CODEX_CONFIG: JSON.stringify({ approval_policy: "on-request", approvals_reviewer: "auto_review", sandbox_mode: "danger-full-access", sandbox_workspace_write: { network_access: true, writable_roots: ["/"] }, features: { plugins: true, apps: true, tool_suggest: true, shell_snapshot: false }, mcp_servers: { explicitly_configured: { command: "fixture-server" } } }) }
     })
     await client.start(5000)
     const created = await client.request("session/new", { cwd: temp, mcpServers: [] }, 5000)
@@ -47,7 +47,7 @@ test("real codex-acp native chain cannot auto-review a failed sandbox or switch 
     const limits = await client.request("_account/rate_limits", {}, 5000)
     assert.equal(limits.rateLimits.primary.usedPercent, 17)
     const events = (await readFile(logFile, "utf8")).trim().split("\n").map(JSON.parse)
-    assert.deepEqual(events[0].argv, ["-c", 'approval_policy="never"', "-c", 'approvals_reviewer="user"', "-c", 'sandbox_mode="workspace-write"', "app-server"])
+    assert.deepEqual(events[0].argv, ["-c", 'approval_policy="never"', "-c", 'approvals_reviewer="user"', "-c", 'sandbox_mode="workspace-write"', "-c", "features.plugins=false", "-c", "features.apps=false", "-c", "features.tool_suggest=false", "app-server"])
     const nativeRequests = events.filter((event) => ["thread/start", "thread/resume", "thread/fork", "turn/start"].includes(event.method))
     assert.deepEqual(nativeRequests.slice(0, 5).map((event) => event.method), ["thread/start", "thread/resume", "thread/resume", "thread/fork", "turn/start"])
     for (const event of nativeRequests) {
@@ -60,6 +60,13 @@ test("real codex-acp native chain cannot auto-review a failed sandbox or switch 
         assert.equal(event.params.config.sandbox_mode, "workspace-write")
         assert.equal(event.params.config.sandbox_workspace_write.network_access, false)
         assert.deepEqual(event.params.config.sandbox_workspace_write.writable_roots, [])
+        assert.equal(event.params.config.features.plugins, false)
+        assert.equal(event.params.config.features.apps, false)
+        assert.equal(event.params.config.features.tool_suggest, false)
+        if (!event.params.ephemeral) {
+          assert.equal(event.params.config.features.shell_snapshot, false)
+          assert.equal(event.params.config.mcp_servers.explicitly_configured.command, "fixture-server")
+        }
       }
     }
     const resume = nativeRequests.find((event) => event.params.threadId === "native-history-thread")
@@ -69,6 +76,10 @@ test("real codex-acp native chain cannot auto-review a failed sandbox or switch 
     assert.deepEqual(approvals.slice(0, 3).map((event) => event.result), [{ decision: "decline" }, { decision: "decline" }, { permissions: {}, scope: "turn", strictAutoReview: false }])
     assert.equal(events.filter((event) => event.pid).length, 1, "limits reuse the native connection")
     assert.equal(events.filter((event) => event.method === "account/rateLimits/read").length, 1)
+    const nativeStatus = await client.request("_harness/native_status", {}, 5000)
+    assert.equal(nativeStatus.profile, "core")
+    assert.equal(nativeStatus.sessions.find((session) => session.threadID === created.sessionId).turnStatus, "completed")
+    assert.equal(JSON.stringify(nativeStatus).includes("Offline failed namespace fixture"), false)
     assert.equal(existsSync(escapedFile), false)
     process.kill(events[0].pid, "SIGKILL")
     for (let attempt = 0; attempt < 100 && client.processID; attempt++) await new Promise((resolve) => setTimeout(resolve, 10))

@@ -463,9 +463,14 @@ export function createBridgeServer({ config, acp, serviceOptions, machineRegistr
         return
       }
 
-      const sessionMatch = /^\/session\/([^/]+)(?:\/(message|prompt_async|abort|todo|diff|action|command|queue)(?:\/([^/]+))?)?$/.exec(url.pathname)
+      const sessionMatch = /^\/session\/([^/]+)(?:\/(message|prompt_async|abort|todo|diff|action|command|queue|execution)(?:\/([^/]+))?)?$/.exec(url.pathname)
       if (sessionMatch) {
         const [, sessionID, operation, actionID] = sessionMatch
+        if (request.method === "GET" && operation === "execution") {
+          if (backend !== "codex") { writeJSON(response, 404, { error: "Native execution diagnostics are available for Codex only" }); return }
+          writeJSON(response, 200, await service.readNativeExecution(sessionID))
+          return
+        }
         if (request.method === "PATCH" && !operation) {
           const body = await readBody(request)
           writeJSON(response, 200, await service.renameSession(sessionID, typeof body.title === "string" ? body.title : ""))

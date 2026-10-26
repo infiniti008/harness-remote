@@ -59,6 +59,11 @@ for (const scenario of ["completion-before-ack", "ack-before-completion", "late-
       // Allow the old interrupt acknowledgement to arrive after NEXT has completed.
       if (scenario === "completion-before-ack") await delay(350)
       assert.equal(client.diagnostics().pendingRequestCount, 0)
+      const execution = await client.request("_harness/native_status", {}, 5000)
+      const observed = execution.sessions.find((state) => state.threadID === sessionId)
+      assert.equal(observed.turnStatus, "completed")
+      assert.equal(observed.turnID, "turn-2")
+      assert.ok(observed.firstOutputAt)
       const transport = await events()
       assert.equal(transport.filter((event) => event.method === "turn/start" && event.params.threadId === sessionId).length, 2)
       assert.ok(transport.filter((event) => event.method === "turn/interrupt").every((event) => event.params.turnId === "turn-1"), "old cancellation must never target NEXT")

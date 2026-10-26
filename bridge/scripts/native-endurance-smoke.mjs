@@ -91,7 +91,7 @@ export async function runNativeEndurance(argv = process.argv.slice(2)) {
         return response.ok ? await response.json() : { httpStatus: response.status }
       } catch (error) { return { unavailable: true, errorName: error.name } }
     }
-    const [diag, statuses] = await Promise.all([get("/v1/diagnostics"), get(`${scoped}/session/status`)])
+    const [diag, statuses, native] = await Promise.all([get("/v1/diagnostics"), get(`${scoped}/session/status`), get(`${route()}/execution`)])
     const process = diag.agents?.find((agent) => agent.id === "codex")?.process
     const service = diag.services?.codex
     const pick = (source, keys) => source && Object.fromEntries(keys.filter((key) => source[key] !== undefined).map((key) => [key, source[key]]))
@@ -99,6 +99,7 @@ export async function runNativeEndurance(argv = process.argv.slice(2)) {
       process: pick(process, ["state", "processID", "startInFlight", "pendingRequestCount", "oldestPendingMs", "pendingRequests"]),
       service: pick(service, ["activeSessions", "queuedSessions", "inFlightLoads", "snapshotWrites", "promptIdleTimeoutMs"]),
       sessionStatus: statuses[threadID],
+      nativeExecution: native,
       diagnosticsUnavailable: pick(diag, ["httpStatus", "unavailable", "errorName"]),
       statusUnavailable: pick(statuses, ["httpStatus", "unavailable", "errorName"]),
       ...(budget.enforced ? { cgroup: await cgroupResources() } : {}) }
@@ -238,7 +239,7 @@ export async function runNativeEndurance(argv = process.argv.slice(2)) {
     report.candidateVersion = staged.version
     const native = path.join(temp, "native")
     await writeFile(native, `#!/bin/sh\nexec prlimit --as=1073741824 --cpu=30 -- ${quote(executable)} "$@"\n`, { mode: 0o700 })
-    const runtimeEnv = { ...env, CODEX_PATH: native }
+    const runtimeEnv = { ...env, CODEX_PATH: native, ...(development ? { HARNESS_ALLOW_UNBOUNDED_DEVELOPMENT: "1" } : {}) }
     // No Tokio/Rayon/libuv override: measure candidate defaults rather than silently tuning them.
     report.poolOverrides = "none"
     note("bootstrap")
@@ -270,6 +271,11 @@ export async function runNativeEndurance(argv = process.argv.slice(2)) {
     await startGateway()
     sampler = setInterval(async () => { if (sampling) return; sampling = true; try { await snapshot() } catch (e) { report.samplingError = e.message } finally { sampling = false } }, 100)
     await quick("WARM")
+    const execution = await readJSON(`${route()}/execution`)
+    assert.equal(execution.profile, "core")
+    assert.equal(execution.execution.turnStatus, "completed")
+    assert.ok(execution.execution.firstOutputAt)
+    report.nativeExecution = execution
     report.baseline = await idleSample("baseline")
     for (let i = 0; i < cycles; i++) {
       note("stop_cycle", { cycle: i + 1 })

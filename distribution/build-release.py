@@ -89,7 +89,8 @@ def main():
     manifest = {'version': version, 'channel': 'candidate', 'commit': commit, 'dirty': dirty,
         'upstreamCommit': '4463fcfa02d35c77177b762f04ba6841fc168107',
         'testedRuntime': {'node': '24.21.0', 'codex': '0.163.0', 'codex-acp': '1.13.1'},
-        'historyProtocol': 1, 'nativeCodexBundled': False, 'dependencies': DEPENDENCIES}
+        'historyProtocol': 1, 'nativeCodexBundled': False, 'dependencies': DEPENDENCIES,
+        'nativeProfile': {'name': 'core', 'disabledDiscoveryFeatures': ['plugins', 'apps', 'tool_suggest']}}
     with tempfile.TemporaryDirectory(dir=out) as temp:
         stage = Path(temp) / 'bundle'
         stage.mkdir()
@@ -100,7 +101,7 @@ def main():
         shutil.copytree(ROOT / 'web/dist', stage / 'web')
         (stage / 'distribution').mkdir()
         (stage / 'docs').mkdir()
-        for name in ['LOCAL_2_RETEST.md', 'LOCAL_2_VALIDATION.md', 'COMPACT_WORKSPACE.md', 'LOCAL_4_NATIVE_SAFETY.md', 'LOCAL_4_RETEST.md', 'LOCAL_4_VALIDATION.md', 'LOCAL_5_RETEST.md', 'LOCAL_5_VALIDATION.md', 'LOCAL_6_RETEST.md', 'LOCAL_6_VALIDATION.md', 'MCP_SETUP.md', 'LOCAL_6_ENDURANCE.md', 'LOCAL_7_RETEST.md']:
+        for name in ['LOCAL_2_RETEST.md', 'LOCAL_2_VALIDATION.md', 'COMPACT_WORKSPACE.md', 'LOCAL_4_NATIVE_SAFETY.md', 'LOCAL_4_RETEST.md', 'LOCAL_4_VALIDATION.md', 'LOCAL_5_RETEST.md', 'LOCAL_5_VALIDATION.md', 'LOCAL_6_RETEST.md', 'LOCAL_6_VALIDATION.md', 'MCP_SETUP.md', 'LOCAL_6_ENDURANCE.md', 'LOCAL_7_RETEST.md', 'LOCAL_8_RETEST.md', 'HA_DEPLOYMENT_PATH.md']:
             shutil.copy2(ROOT / 'docs' / name, stage / 'docs' / name)
         (stage / 'docs/previews').mkdir()
         for name in ['compact-desktop.png', 'compact-phone.png', 'local4-desktop.png', 'local4-phone.png', 'local5-menu-desktop.png', 'local5-menu-phone.png', 'local7-image-desktop.png', 'local7-image-phone.png']:

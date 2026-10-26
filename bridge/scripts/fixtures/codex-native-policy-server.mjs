@@ -30,7 +30,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     case "account/read": result = { account: { type: "chatgpt", email: "fixture@example.invalid", planType: "plus" }, requiresOpenaiAuth: true }; break
     case "config/read": result = { config: { model_provider: "openai" }, origins: {}, layers: [] }; break
     case "model/list": result = { data: [{ id: "fixture-model", model: "fixture-model", displayName: "Fixture model", description: "Offline", isDefault: true, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "fixture" }], inputModalities: ["text"] }], nextCursor: null }; break
-    case "thread/start": result = settings("new-thread"); break
+    case "thread/start": result = settings(params.ephemeral ? "title-thread" : "new-thread"); break
     case "thread/resume": result = settings(params.threadId); break
     case "thread/fork": result = settings("fork-thread"); break
     case "thread/read": result = { thread: thread(params.threadId) }; break
@@ -40,6 +40,11 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     case "thread/goal/get": result = { goal: null }; break
     case "account/rateLimits/read": result = { rateLimits: { limitId: "codex", primary: { usedPercent: 17, windowDurationMins: 300, resetsAt: 2000000000 }, secondary: null, credits: null, planType: "plus" } }; break
     case "turn/start": {
+      if (params.threadId === "title-thread") {
+        send({ id: message.id, result: { turn: { id: "title-turn", status: "inProgress", items: [], error: null } } })
+        send({ method: "turn/completed", params: { threadId: "title-thread", turn: { id: "title-turn", status: "completed", items: [], error: null } } })
+        return
+      }
       // Simulate the reported failed-bwrap escalation: if native auto-review remains enabled,
       // write a marker without asking ACP. The repaired source must prevent this path entirely.
       if (params.approvalPolicy !== "never" || params.approvalsReviewer === "auto_review" || params.sandboxPolicy?.type !== "workspaceWrite") {

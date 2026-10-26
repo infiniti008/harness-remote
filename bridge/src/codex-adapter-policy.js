@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { createCodexNativeObservation } from "./codex-native-observation.js"
 
 // Exact dist/index.js from the checksum-verified codex-acp 1.13.1 archive. A vendor update
 // must be reviewed against its real native request path; an unmatched bundle fails closed.
@@ -14,8 +15,10 @@ export function hardenCodexAdapter(source) {
   }
   // Protect startup as well as per-thread and per-turn overrides. In particular the adapter's
   // normal Agent mode uses auto_review, which can approve native escalation without ACP asking.
+  // Core profile avoids native plugin/app/tool-suggestion discovery (0.163.0 issue #55479).
+  // Explicit MCP configuration, skills, model/provider selection and sandbox policy are preserved.
   replace('spawn(codexPath, ["app-server"], { env: spawnEnv })',
-    'spawn(codexPath, ["-c", \'approval_policy="never"\', "-c", \'approvals_reviewer="user"\', "-c", \'sandbox_mode="workspace-write"\', "app-server"], { env: spawnEnv })')
+    'spawn(codexPath, ["-c", \'approval_policy="never"\', "-c", \'approvals_reviewer="user"\', "-c", \'sandbox_mode="workspace-write"\', "-c", "features.plugins=false", "-c", "features.apps=false", "-c", "features.tool_suggest=false", "app-server"], { env: spawnEnv })')
   const start = source.indexOf("  static ReadOnly = new _AgentMode(")
   const end = source.indexOf("  toSessionMode() {", start)
   if (start < 0 || end < start) throw new Error("Codex mode policy patch is missing")
@@ -38,6 +41,7 @@ export function hardenCodexAdapter(source) {
       } else {
         params.sandbox = "workspace-write";
         params.config = { ...params.config, approval_policy: "never", approvals_reviewer: "user",
+          features: { ...params.config?.features, plugins: false, apps: false, tool_suggest: false },
           sandbox_mode: "workspace-write", sandbox_workspace_write: {
             writable_roots: [], network_access: false, exclude_tmpdir_env_var: true, exclude_slash_tmp: true
           } };
@@ -60,8 +64,24 @@ export function hardenCodexAdapter(source) {
     '      process.stderr.write("Native Codex app-server exited; closing its ACP process group\\n"); process.exit(1);')
   // Reuse the existing, authenticated app-server connection. No additional Codex process,
   // login, model call or session is needed to read account limits.
+  replace('var CodexAppServerClient = class {', `var harnessNativeObservation = (${createCodexNativeObservation.toString()})();
+var CodexAppServerClient = class {`)
+  replace('      const serverNotification = data;', '      const serverNotification = data;\n      harnessNativeObservation.notification(serverNotification);')
+  replace('    let result;\n    if (request.params) {\n      result = await this.connection.sendRequest(request.method, request.params);\n    } else {\n      result = await this.connection.sendRequest(request.method);\n    }', `    const observationToken = harnessNativeObservation.requestStarted(request);
+    let result;
+    try {
+      result = request.params
+        ? await this.connection.sendRequest(request.method, request.params)
+        : await this.connection.sendRequest(request.method);
+      harnessNativeObservation.requestFinished(request, observationToken, result, false);
+    } catch (error) {
+      harnessNativeObservation.requestFinished(request, observationToken, null, true);
+      throw error;
+    }`)
   replace('.connect(acpJsonStream);', `.onRequest("_account/rate_limits", emptyExtensionParamsParser, async () => {
     return await getAgent().codexAcpClient.appServerClient.accountRateLimitsRead();
+  }).onRequest("_harness/native_status", emptyExtensionParamsParser, async () => {
+    return harnessNativeObservation.read();
   }).connect(acpJsonStream);`)
   return source
 }

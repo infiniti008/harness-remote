@@ -2,7 +2,16 @@
 
 ## Current position
 
-Keep the web client and native Codex gateway on a host with enforceable aggregate limits. Treat Home Assistant as a UI/integration target until a Supervisor app can meet the same resource and lifecycle requirements. The current `distribution/Dockerfile` and `compose.yaml` are Linux/NAS templates, not a released HA app; the Compose template requests 1 CPU, 1 GiB memory, no swap, 128 PIDs, and `restart: "no"`, but it has not been validated as a production image. The distribution workflow does not publish a container image.
+**User decision, 2026-10-26:** native Codex must run in the Home Assistant environment, with
+direct project-file and local tool access, comparable to the VS Code app on HA. A Mac/NAS gateway
+that invokes SSH for ordinary agent operations does not meet the requirement. Use the
+[HA-local runtime design](HA_LOCAL_RUNTIME.md) as the target architecture.
+
+The current `distribution/Dockerfile` and `compose.yaml` are Linux/NAS templates, not a released
+HA app. The Compose template requests 1 CPU, 1 GiB memory, no swap, 128 PIDs and `restart: no`;
+those keys do not become Supervisor settings automatically. The distribution workflow does not
+publish an HA image yet. Resource provisioning and target-host sandbox validation are installation
+work to complete for the chosen HA-local route, not a reason to substitute remote execution.
 
 The local.8 packaged launcher now refuses startup unless those external cgroup v2 bounds are
 visible. This is a read-only startup guard; it does not add missing Supervisor settings or apply
@@ -14,9 +23,9 @@ synthetic fixtures on an uncapped development host, not an HA deployment route.
 
 | Route | Fit | Limits and boundary | Status |
 | --- | --- | --- | --- |
-| Standalone Linux Docker | Best immediate fit for web + native Codex | Existing Compose template expresses cgroup CPU/memory/swap/PID limits and `restart: no`. Mount only an explicit project root and a dedicated persistent state volume. Preserve absolute Codex/project paths. Do not mount the Docker socket. | Template only; build, host cgroup enforcement, stop/descendant cleanup, persistence, backup and rollback still need target-host verification. |
-| HAOS Supervisor app | Best eventual in-HA web entry | Supervisor schema supports app ingress, storage mappings, AppArmor/protection mode and stop timeout. The documented schema has no cgroup memory, CPU quota or PID-limit setting; `ulimits.nproc` does not equal a cgroup PID cap. Do not claim 1 GiB/1 CPU/128-PID enforcement or a production-safe native app without another documented and tested control. | Not ready: no HA app image/repository/CI is published, and a fresh app data directory does not contain a prepared Codex home. |
-| Gateway on Mac/NAS + HA-facing integration | Viable if HAOS cannot enforce required limits | Keep the bounded gateway on the Mac/NAS. Connect HA only through a separately scoped, read-only MCP/API integration, or a narrowly limited SSH account/command with an explicit path allowlist. Avoid host-wide credentials, shell access, or broad filesystem mounts. | Candidate architecture only; no assumption that a suitable MCP, SSH account, or integration is already installed. Must test the exact identity, paths, verbs and network exposure. |
+| Standalone Linux Docker | Packaging/rehearsal reference | Existing Compose template expresses whole-instance limits and lifecycle. | Useful for controlled packaging tests; does not by itself install an app on HAOS. |
+| HAOS Supervisor app | **Selected target: web + native Codex on HA** | Direct HA configuration mapping, private persistent agent state, local commands/MCP. Supervisor schema has no documented cgroup memory/CPU/PID quota keys; host-side provisioning and startup/recreation verification are required. | Implementation target; not yet an installed or validated app. |
+| Gateway on Mac/NAS + SSH/MCP access to HA | Does not meet the selected local-execution experience | Executes the agent outside HA. | Not the planned production architecture. Mac remains the isolated test/build host. |
 
 ## Why not move the native service into the SSH app
 
@@ -31,11 +40,11 @@ The existing SSH app is not an aggregate resource manager for this workload. Ret
 
 ## Decisions needed before selecting a route
 
-1. Which host will run the native gateway (Linux Docker host, Mac/NAS, or HAOS only), its architecture, available RAM/swap and whether required cgroups are enabled and enforceable?
-2. Is the first milestone only the web UI inside HA, or must native Codex run on the HAOS machine? If HAOS is mandatory, is absence of Supervisor cgroup limits acceptable, or is the route blocked until a tested external resource boundary exists?
-3. Which exact project directory should be writable, and which HA data, if any, must be visible? Can HA-facing access be read-only and limited to named entities/files/actions?
-4. Which credential onboarding and recovery flow is approved on the selected host, and which existing setup (if any) is in scope? No current SSH/MCP installation is assumed.
-5. What is the accepted backup/restore point and rollback check for gateway state, Codex home, projects and the prior image/config?
+The execution-location decision is settled. Before installation, inspect the target HA host and
+implement the resource setup, direct project mapping, local tool inventory, separate persistent
+Codex state, onboarding/restore and backup/rollback described in the selected design. Do not ask
+the user to choose a remote SSH architecture again. Keep existing VS Code, its Codex profile,
+historical backups and working Harness intact during preparation.
 
 ## Primary references
 
